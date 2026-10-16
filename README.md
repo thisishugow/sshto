@@ -38,7 +38,13 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ### Homebrew
 
-Homebrew packaging is included and has been tested locally. A public tap and downloadable release have **not been published yet**, so there is no public `brew install` command to run today. See [PACKAGING.md](PACKAGING.md) for the release procedure.
+```sh
+brew install thisishugow/tap/sshto
+```
+
+Update with `brew upgrade thisishugow/tap/sshto`. The [public tap](https://github.com/thisishugow/homebrew-tap) installs the executable, documentation, license, and a generic configuration example without changing your personal configuration.
+
+See [Releases](https://github.com/thisishugow/sshto/releases) for downloads and [PACKAGING.md](PACKAGING.md) for the release procedure.
 
 ## Usage
 
@@ -82,6 +88,14 @@ For first-time setup, copy the generic example from the source directory:
 ```sh
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/sshto"
 cp -n examples/config "${XDG_CONFIG_HOME:-$HOME/.config}/sshto/config"
+```
+
+For a Homebrew installation, copy the installed example instead:
+
+```sh
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/sshto"
+cp -n "$(brew --prefix sshto)/share/sshto/config" \
+  "${XDG_CONFIG_HOME:-$HOME/.config}/sshto/config"
 ```
 
 Edit that file to match your own aliases. The example uses fictional names and documentation-only IP addresses:

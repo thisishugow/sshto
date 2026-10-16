@@ -4,6 +4,8 @@ User-facing changes are recorded here. Versions follow semantic versioning.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-16
+
 ### Added
 
 - macOS SSH terminal menu compatible with Bash 3.2 and Bash 5.
@@ -14,7 +16,8 @@ User-facing changes are recorded here. Versions follow semantic versioning.
 - Responsive layouts and terminal restoration when quitting or connecting.
 - Direct argument forwarding to SSH, plus help and version commands.
 - Isolated PTY tests and an allowlisted release builder with SHA256 checksums.
-- A Homebrew Formula template and packaging documentation.
+- A public Homebrew tap, release archives with SHA256 checksums, and packaging documentation.
 - English documentation and interface, an SVG logo, and the MIT license.
 
-The working version is `0.1.0`; a tagged release and public Homebrew tap have not yet been published.
+[Unreleased]: https://github.com/thisishugow/sshto/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/thisishugow/sshto/releases/tag/v0.1.0

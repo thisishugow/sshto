@@ -44,15 +44,15 @@ This creates `Formula/sshto.rb.in` with unresolved URL placeholders. It is a tem
 
 ## Publish a tap
 
-Create or choose a separate Homebrew tap repository, typically named `homebrew-tap`, and put the generated Formula at `Formula/sshto.rb`. The tap location has not yet been selected for this project.
+The public tap is [thisishugow/homebrew-tap](https://github.com/thisishugow/homebrew-tap). Put the generated Formula at `Formula/sshto.rb` in that repository.
 
-Once both the archive and tap are published, users can install with the following format, replacing `OWNER/TAP` with the actual tap:
+After uploading the release archive and pushing the updated Formula, users can install with:
 
 ```sh
-brew install OWNER/TAP/sshto
+brew install thisishugow/tap/sshto
 ```
 
-Test the published Formula with `brew test OWNER/TAP/sshto`. Upgrade it using `brew upgrade OWNER/TAP/sshto` after updating the Formula's version, URL, and checksum for subsequent releases.
+Test the published Formula with `brew test thisishugow/tap/sshto`. Upgrade it using `brew upgrade thisishugow/tap/sshto` after updating the Formula's version, URL, and checksum for subsequent releases.
 
 The Formula installs the executable, documentation, MIT license, and a generic configuration example. It never writes to users' SSH or group configuration. The example is installed at `$(brew --prefix sshto)/share/sshto/config`.
 
