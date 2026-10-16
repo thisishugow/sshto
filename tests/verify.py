@@ -256,8 +256,12 @@ else:
             self.assertNotIn('cloud-ts', s.frame())
             s.send(self.click(5, 4))  # Second host: work-a
             self.assertIn('> work-a', s.frame())
+            s.send(DOWN + UP)  # Reset click timing while preserving the selection.
             before = len(self.connections())
-            s.send(b'\x1b[<0;5;4M')
+            # Queue a fresh click pair without frame assertions or fixed waits between clicks.
+            # Otherwise a busy CI runner can exhaust the real 450 ms double-click window.
+            os.write(s.fd, self.click(5, 4) + b'\x1b[<0;5;4M')
+            s.read(0.02)
             self.assertEqual(len(self.connections()), before)
             s.send(b'\x1b[<0;5;4m')
             self.assertEqual(s.wait(), 0, s.data.decode())
