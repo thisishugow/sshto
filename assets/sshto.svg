@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="192" viewBox="0 0 480 192" role="img" aria-labelledby="title desc">
+  <title id="title">sshto</title>
+  <desc id="desc">A terminal prompt connected to a group of host nodes. Pick a host. Connect.</desc>
+  <rect width="480" height="192" rx="24" fill="#101c2d"/>
+  <g transform="translate(32 32)">
+    <rect width="128" height="128" rx="28" fill="#192b40" stroke="#30445a" stroke-width="2"/>
+    <path d="M27 42 48 64 27 86" fill="none" stroke="#6ee7b7" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M66 64h16m0-24v48m0-48h15M82 64h15M82 88h15" fill="none" stroke="#65849c" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="101" cy="40" r="6" fill="#6ee7b7"/>
+    <circle cx="101" cy="64" r="6" fill="#64c8f0"/>
+    <circle cx="101" cy="88" r="6" fill="#64c8f0"/>
+  </g>
+  <text x="192" y="108" fill="#f1f6fc" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="76" font-weight="700" letter-spacing="-4">ssh<tspan fill="#6ee7b7">to</tspan></text>
+  <text x="195" y="143" fill="#a6b9ce" font-family="-apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif" font-size="20" letter-spacing="0.4">Pick a host. Connect.</text>
+</svg>

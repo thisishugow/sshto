@@ -1,0 +1,25 @@
+# Generated release artifacts and Python caches
+/dist/
+__pycache__/
+*.py[cod]
+
+# Local configuration and credentials
+/.ssh/
+/.config/
+/config
+/config.local
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

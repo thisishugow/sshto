@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Bash 5 for compatibility checks
+        run: brew install bash
+      - name: Check Bash syntax
+        run: /bin/bash -n sshto
+      - name: Run isolated PTY and packaging tests
+        run: python3 tests/verify.py

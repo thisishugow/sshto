@@ -1,0 +1,13 @@
+# Generic names and documentation addresses only; adapt these rules to your SSH aliases.
+group|Tailscale
+group|Work
+group|Personal
+
+# First matching rule wins; group declarations determine display order.
+match|Work|hostname|192.0.2.*
+match|Tailscale|either|*.ts.net
+match|Tailscale|alias|*-ts
+match|Work|alias|work-*
+match|Personal|alias|home-*
+exclude|github.*
+exclude|gitlab.*
