@@ -18,21 +18,25 @@ import tarfile
 import tempfile
 import termios
 import time
+import tomllib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = Path(os.environ.get('SSHTO_TEST_SCRIPT', str(ROOT / 'sshto')))
-BASHES = [p for p in ['/bin/bash', '/opt/homebrew/bin/bash', '/usr/local/bin/bash'] if Path(p).is_file()]
+with (ROOT / "Cargo.toml").open("rb") as manifest:
+    VERSION = tomllib.load(manifest)["package"]["version"]
+BIN = Path(os.environ.get('SSHTO_TEST_BIN', str(ROOT / 'target/debug/sshto')))
+if 'SSHTO_TEST_BIN' not in os.environ:
+    subprocess.run(['cargo', 'build'], cwd=ROOT, check=True)
 ANSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]|\x1b\([^)]|\x1b[=>]')
 UP, DOWN, LEFT, RIGHT = b'\x1b[A', b'\x1b[B', b'\x1b[D', b'\x1b[C'
 
 class Session:
-    def __init__(self, bash, env, rows=30, cols=160):
+    def __init__(self, env, rows=30, cols=160):
         self.data = b''
         self.status = None
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
-            os.execve(bash, [bash, str(SCRIPT)], env)
+            os.execve(str(BIN), [str(BIN)], env)
         self.resize(rows, cols, notify=False)
         self.read(0.35)
 
@@ -146,8 +150,8 @@ else:
             session.close()
         self.tmp.cleanup()
 
-    def start(self, bash, ready=True, **kwargs):
-        session = Session(bash, self.env, **kwargs)
+    def start(self, ready=True, **kwargs):
+        session = Session(self.env, **kwargs)
         self.sessions.append(session)
         if ready:
             deadline = time.monotonic() + 8
@@ -168,25 +172,23 @@ else:
         self.assertTrue(termios.tcgetattr(s.fd)[3] & termios.ECHO)
 
     def test_config_order_priority_and_all_navigation(self):
-        for bash in BASHES:
-            with self.subTest(bash=bash):
-                s = self.start(bash)
-                frame = s.frame()
-                self.assertIn('0:All(6)', frame)
-                order = ['cloud-ts', 'office-ts', 'work-a', 'work-b', 'home-b', 'loose']
-                self.assertEqual(sorted(order, key=frame.index), order)
-                self.assertNotIn('github.example', frame)
-                self.assertEqual(frame.count('work-a'), 1)
-                s.send(b'2')
-                self.assertIn('office-ts', s.frame())
-                self.assertNotIn('cloud-ts', s.frame())
-                s.send(b'0' + LEFT)
-                self.assertIn('loose', s.frame())
-                self.assertNotIn('work-a', s.frame())
-                s.send(RIGHT + b'\t')
-                self.assertIn('cloud-ts', s.frame())
-                self.assertNotIn('loose', s.frame())
-                self.finish(s)
+        s = self.start()
+        frame = s.frame()
+        self.assertIn('0:All(6)', frame)
+        order = ['cloud-ts', 'office-ts', 'work-a', 'work-b', 'home-b', 'loose']
+        self.assertEqual(sorted(order, key=frame.index), order)
+        self.assertNotIn('github.example', frame)
+        self.assertEqual(frame.count('work-a'), 1)
+        s.send(b'2')
+        self.assertIn('office-ts', s.frame())
+        self.assertNotIn('cloud-ts', s.frame())
+        s.send(b'0' + LEFT)
+        self.assertIn('loose', s.frame())
+        self.assertNotIn('work-a', s.frame())
+        s.send(RIGHT + b'\t')
+        self.assertIn('cloud-ts', s.frame())
+        self.assertNotIn('loose', s.frame())
+        self.finish(s)
 
     def test_default_xdg_and_explicit_config(self):
         text = self.config.read_text()
@@ -194,135 +196,162 @@ else:
         custom = self.root / 'custom/sshto'
         custom.mkdir(parents=True)
         (custom / 'config').write_text(text)
-        for bash in BASHES:
-            s = self.start(bash)
-            self.assertIn('1:Other(7)', s.frame())
-            self.assertNotIn('2:', s.frame().splitlines()[0])
-            self.finish(s)
-            self.env['XDG_CONFIG_HOME'] = str(custom.parent)
-            s = self.start(bash)
-            self.assertIn('0:All(6)', s.frame())
-            self.finish(s)
-            self.env.pop('XDG_CONFIG_HOME')
-            self.env['SSHTO_CONFIG'] = str(custom / 'config')
-            s = self.start(bash)
-            self.assertIn('工作(3)', s.frame())
-            self.finish(s)
-            self.env.pop('SSHTO_CONFIG')
+        s = self.start()
+        self.assertIn('1:Other(7)', s.frame())
+        self.assertNotIn('2:', s.frame().splitlines()[0])
+        self.finish(s)
+        self.env['XDG_CONFIG_HOME'] = str(custom.parent)
+        s = self.start()
+        self.assertIn('0:All(6)', s.frame())
+        self.finish(s)
+        self.env.pop('XDG_CONFIG_HOME')
+        self.env['SSHTO_CONFIG'] = str(custom / 'config')
+        s = self.start()
+        self.assertIn('工作(3)', s.frame())
+        self.finish(s)
+        self.env.pop('SSHTO_CONFIG')
 
     def test_reject_invalid_config_and_never_execute_data(self):
         for text in ['group|All\n', 'group|X\ngroup|X\n', 'match|Missing|alias|*\n',
                      'group|X\nmatch|X|unknown|*\n', 'group|X|bad\n', 'group|X\x1b\n']:
             self.config.write_text(text)
-            for bash in BASHES:
-                s = self.start(bash, ready=False)
-                self.assertEqual(s.wait(), 1, s.data.decode())
-                self.assertNotIn(b'\x1b[?1049h', s.data)
+            s = self.start(ready=False)
+            self.assertEqual(s.wait(), 1, s.data.decode())
+            self.assertNotIn(b'\x1b[?1049h', s.data)
         self.env['SSHTO_CONFIG'] = str(self.root / 'missing')
-        s = self.start(BASHES[0], ready=False)
+        s = self.start(ready=False)
         self.assertEqual(s.wait(), 1)
         self.env.pop('SSHTO_CONFIG')
         marker = self.root / 'executed'
         self.config.write_text(f'group|$(touch {marker})\nmatch|$(touch {marker})|alias|*\n')
-        for bash in BASHES:
-            s = self.start(bash)
-            self.assertFalse(marker.exists())
-            self.finish(s)
+        s = self.start()
+        self.assertFalse(marker.exists())
+        self.finish(s)
 
     def test_more_than_nine_groups_and_resize(self):
         self.config.write_text(''.join(f'group|G{i}\n' for i in range(11)) + 'match|G10|alias|*\n')
-        for bash in BASHES:
-            s = self.start(bash, rows=8, cols=40)
-            s.send(b'0' + LEFT + LEFT)
-            self.assertIn('11:G10 (7)', s.frame())
-            s.resize(1, 40)
-            s.read(1.2)
-            self.assertIn('cloud-ts', s.frame())
-            s.resize(8, 40)
-            s.read(1.2)
-            self.assertIn('11:G10', s.frame())
-            self.finish(s)
+        s = self.start(rows=8, cols=40)
+        s.send(b'0' + LEFT + LEFT)
+        self.assertIn('11:G10 (7)', s.frame())
+        s.resize(1, 40)
+        s.read(1.2)
+        self.assertIn('cloud-ts', s.frame())
+        s.resize(8, 40)
+        s.read(1.2)
+        self.assertIn('11:G10', s.frame())
+        self.finish(s)
 
     @staticmethod
     def click(x, y):
         return f'\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m'.encode()
 
     def test_unicode_tab_hitboxes_and_double_click_release(self):
-        for bash in BASHES:
-            s = self.start(bash)
-            # All takes 10 cells and Tailscale 16; the wide-character group starts at column 27.
-            s.send(self.click(29, 1))
-            self.assertIn('office-ts', s.frame())
-            self.assertNotIn('cloud-ts', s.frame())
-            s.send(self.click(5, 4))  # Second host: work-a
-            self.assertIn('> work-a', s.frame())
-            s.send(DOWN + UP)  # Reset click timing while preserving the selection.
-            before = len(self.connections())
-            # Queue a fresh click pair without frame assertions or fixed waits between clicks.
-            # Otherwise a busy CI runner can exhaust the real 450 ms double-click window.
-            os.write(s.fd, self.click(5, 4) + b'\x1b[<0;5;4M')
-            s.read(0.02)
-            self.assertEqual(len(self.connections()), before)
-            s.send(b'\x1b[<0;5;4m')
-            self.assertEqual(s.wait(), 0, s.data.decode())
-            self.assertEqual(self.connections()[-1], ['work-a'])
-            self.assertIn(b'\x1b[?1000l', s.data)
+        s = self.start()
+        # All takes 10 cells and Tailscale 16; the wide-character group starts at column 27.
+        s.send(self.click(29, 1))
+        self.assertIn('office-ts', s.frame())
+        self.assertNotIn('cloud-ts', s.frame())
+        s.send(self.click(5, 4))  # Second host: work-a
+        self.assertIn('> work-a', s.frame())
+        s.send(DOWN + UP)  # Reset click timing while preserving the selection.
+        before = len(self.connections())
+        # Queue a fresh click pair without frame assertions or fixed waits between clicks.
+        # Otherwise a busy CI runner can exhaust the real 450 ms double-click window.
+        os.write(s.fd, self.click(5, 4) + b'\x1b[<0;5;4M')
+        s.read(0.02)
+        self.assertEqual(len(self.connections()), before)
+        s.send(b'\x1b[<0;5;4m')
+        self.assertEqual(s.wait(), 0, s.data.decode())
+        self.assertEqual(self.connections()[-1], ['work-a'])
+        self.assertIn(b'\x1b[?1000l', s.data)
 
     def test_headers_scroll_keyboard_and_cleanup(self):
-        for bash in BASHES:
-            s = self.start(bash, rows=7, cols=40)
-            s.send(self.click(4, 3) * 2)  # Group heading
-            self.assertFalse(self.connections())
-            s.send(b'\x1b[<65;5;4M' * 5)
-            self.assertIn('loose', s.frame())
-            s.send(self.click(4, 5))
-            time.sleep(0.5)
-            s.send(self.click(4, 5))
-            self.assertFalse(self.connections())
-            self.finish(s)
-            for key, code in [(b'\x03', 130), (b'\x04', 0), (b'\x1b', 0)]:
-                s = self.start(bash)
-                self.finish(s, key, code)
-            s = self.start(bash)
-            s.send(DOWN + b'\r')
-            self.assertEqual(s.wait(), 0, s.data.decode())
-            self.assertEqual(self.connections()[-1], ['office-ts'])
-            self.log.unlink()
+        s = self.start(rows=7, cols=40)
+        s.send(self.click(4, 3) * 2)  # Group heading
+        self.assertFalse(self.connections())
+        s.send(b'\x1b[<65;5;4M' * 5)
+        self.assertIn('loose', s.frame())
+        s.send(self.click(4, 5))
+        time.sleep(0.5)
+        s.send(self.click(4, 5))
+        self.assertFalse(self.connections())
+        self.finish(s)
+        for key, code in [(b'\x03', 130), (b'\x04', 0), (b'\x1b', 0)]:
+            s = self.start()
+            self.finish(s, key, code)
+        s = self.start()
+        s.send(DOWN + b'\r')
+        self.assertEqual(s.wait(), 0, s.data.decode())
+        self.assertEqual(self.connections()[-1], ['office-ts'])
+        self.log.unlink()
+
+    def test_mouse_motion_between_clicks_still_connects(self):
+        s = self.start()
+        s.send(self.click(5, 4) + b'\x1b[<35;6;4M' + self.click(5, 4))
+        self.assertEqual(s.wait(), 0, s.data.decode())
+        self.assertEqual(self.connections(), [['cloud-ts']])
+
+    def test_external_signals_restore_terminal(self):
+        for sig in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM):
+            with self.subTest(signal=sig.name):
+                s = self.start()
+                self.assertFalse(termios.tcgetattr(s.fd)[3] & termios.ECHO)
+                os.kill(s.pid, sig)
+                self.assertEqual(s.wait(), 128 + sig, s.data.decode())
+                for event in (b'\x1b[?1000l', b'\x1b[?1006l', b'\x1b[?25h', b'\x1b[?1049l'):
+                    self.assertIn(event, s.data)
+                self.assertTrue(termios.tcgetattr(s.fd)[3] & termios.ECHO)
+
+    def test_mouse_capture_does_not_request_motion(self):
+        s = self.start()
+        self.assertIn(b'\x1b[?1000h\x1b[?1006h', s.data)
+        for mode in (b'\x1b[?1002h', b'\x1b[?1003h'):
+            self.assertNotIn(mode, s.data)
+        self.finish(s)
 
     def test_cli_and_passthrough(self):
         argv = ['-p', '2222', 'my-host', 'printf', 'space value', 'literal;$HOME']
-        for bash in BASHES:
-            subprocess.run([bash, '-n', str(SCRIPT)], check=True)
-            result = subprocess.run([bash, str(SCRIPT), *argv], env=self.env, capture_output=True)
-            self.assertEqual(result.returncode, 0, result.stderr.decode())
-            self.assertEqual(self.connections()[-1], argv)
-            for arg, expected in [('--version', 'sshto 0.1.0'), ('--help', 'SSHTO_CONFIG')]:
-                result = subprocess.run([bash, str(SCRIPT), arg], capture_output=True, text=True)
-                self.assertEqual(result.returncode, 0)
-                self.assertIn(expected, result.stdout)
+        result = subprocess.run([str(BIN), *argv], env=self.env, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(self.connections()[-1], argv)
+        for arg, expected in [('--version', f'sshto {VERSION}'), ('--help', 'SSHTO_CONFIG')]:
+            result = subprocess.run([str(BIN), arg], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0)
+            self.assertIn(expected, result.stdout)
 
 
 class PackageTests(unittest.TestCase):
     def test_archive_allowlist_metadata_and_formula_checksum(self):
         with tempfile.TemporaryDirectory(prefix='sshto-package-test-') as temp:
             root = Path(temp) / 'source'
-            shutil.copytree(ROOT, root, ignore=shutil.ignore_patterns('__pycache__', '.git', 'dist'))
+            shutil.copytree(ROOT, root, ignore=shutil.ignore_patterns('__pycache__', '.git', 'dist', 'target'))
             (root / 'personal-secret').write_text('PRIVATE_SENTINEL_NOT_FOR_RELEASE')
             out = Path(temp) / 'release'
             subprocess.run([sys.executable, str(root / 'tools/package.py'), str(out),
-                            '--url', 'https://example.com/sshto-0.1.0.tar.gz',
+                            '--url', f'https://example.com/sshto-{VERSION}.tar.gz',
                             '--homepage', 'https://example.com/sshto'], check=True, capture_output=True)
-            archive = out / 'sshto-0.1.0.tar.gz'
+            archive = out / f'sshto-{VERSION}.tar.gz'
             with tarfile.open(archive) as tar:
                 self.assertEqual(set(tar.getnames()), {
-                    'sshto-0.1.0/' + name for name in ['sshto', 'README.md', 'PACKAGING.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'LICENSE', 'assets/sshto.svg', 'examples/config']})
+                    f'sshto-{VERSION}/' + name for name in [
+                        'Cargo.toml', 'Cargo.lock', 'src/cli.rs', 'src/config.rs', 'src/hosts.rs',
+                        'src/main.rs', 'src/menu.rs', 'src/pattern.rs', 'src/ssh.rs', 'src/ui.rs', 'README.md', 'PACKAGING.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'LICENSE', 'assets/sshto.svg', 'examples/config']})
                 for entry in tar:
+                    self.assertTrue(entry.isfile())
+                    self.assertEqual((entry.mode, entry.mtime), (0o644, 0))
                     self.assertEqual((entry.uid, entry.gid, entry.uname, entry.gname), (0, 0, '', ''))
                     self.assertNotIn(b'PRIVATE_SENTINEL_NOT_FOR_RELEASE', tar.extractfile(entry).read())
             formula = (out / 'Formula/sshto.rb').read_text()
-            self.assertIn(hashlib.sha256(archive.read_bytes()).hexdigest(), formula)
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            self.assertIn(digest, formula)
+            self.assertEqual((out / "SHA256SUMS").read_text(), f"{digest}  {archive.name}\n")
+            self.assertIn('depends_on "rust" => :build', formula)
+            self.assertIn('system "cargo", "install", *std_cargo_args', formula)
+            self.assertNotIn("depends_on :macos", formula)
             self.assertNotIn('@@', formula)
-            subprocess.run(['/usr/bin/ruby', '-c', str(out / 'Formula/sshto.rb')], check=True, capture_output=True)
+            ruby = shutil.which('ruby')
+            if ruby:
+                subprocess.run([ruby, '-c', str(out / 'Formula/sshto.rb')], check=True, capture_output=True)
 
 
 if __name__ == '__main__':

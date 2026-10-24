@@ -2,7 +2,7 @@
   <img src="assets/sshto.svg" alt="sshto — SSH terminal menu" width="480">
 </p>
 
-<p align="center">A lightweight SSH terminal menu for macOS with configurable groups and double-click connections.</p>
+<p align="center">A lightweight SSH terminal menu for macOS, Linux, and Windows with configurable groups and double-click connections.</p>
 
 Pick a host from your own SSH configuration and connect with Enter or a double-click. No server inventory to maintain separately, no passwords stored by sshto, and no additional runtime packages to install.
 
@@ -17,24 +17,9 @@ Pick a host from your own SSH configuration and connect with Enter or a double-c
 
 ## Requirements
 
-macOS with its built-in Bash 3.2, OpenSSH, Perl, and standard command-line utilities. Bash 5 is also tested. Mouse support requires a terminal that supports and enables xterm SGR mouse reporting; keyboard navigation remains available otherwise.
+An OpenSSH client on `PATH`, built into macOS, most Linux distributions, and Windows 10/11. Enable the optional OpenSSH Client feature on Windows if `ssh` is unavailable. Mouse support depends on the terminal; keyboard navigation remains available otherwise.
 
 ## Installation
-
-### From source
-
-Download this repository, then run from its directory:
-
-```sh
-mkdir -p "$HOME/.local/bin"
-install -m 755 sshto "$HOME/.local/bin/sshto"
-```
-
-Ensure `~/.local/bin` is on your `PATH`. For zsh, add this to `~/.zshrc` if needed and open a new terminal:
-
-```sh
-export PATH="$HOME/.local/bin:$PATH"
-```
 
 ### Homebrew
 
@@ -44,7 +29,32 @@ brew install thisishugow/tap/sshto
 
 Update with `brew upgrade thisishugow/tap/sshto`. The [public tap](https://github.com/thisishugow/homebrew-tap) installs the executable, documentation, license, and a generic configuration example without changing your personal configuration.
 
-See [Releases](https://github.com/thisishugow/sshto/releases) for downloads and [PACKAGING.md](PACKAGING.md) for the release procedure.
+### Release binaries
+
+Download an archive for your operating system and processor from [Releases](https://github.com/thisishugow/sshto/releases). Prebuilt binaries do not require Rust.
+
+| Platform | Archive target |
+| --- | --- |
+| Linux, Intel/AMD 64-bit | `x86_64-unknown-linux-musl` |
+| Linux, ARM64 | `aarch64-unknown-linux-musl` |
+| macOS, Intel | `x86_64-apple-darwin` |
+| macOS, Apple silicon | `aarch64-apple-darwin` |
+| Windows, Intel/AMD 64-bit | `x86_64-pc-windows-msvc` |
+| Windows, ARM64 | `aarch64-pc-windows-msvc` |
+
+Compare the archive's SHA256 with the release's `SHA256SUMS` using `shasum -a 256` on macOS, `sha256sum` on Linux, or `Get-FileHash -Algorithm SHA256` in PowerShell. Extract the `.tar.gz` (macOS/Linux) or `.zip` (Windows). Place `sshto` or `sshto.exe` in a directory on your `PATH`, such as `~/.local/bin` on Unix or a user-owned tools directory on Windows.
+
+### From source
+
+With the Rust toolchain installed:
+
+```sh
+cargo install --git https://github.com/thisishugow/sshto
+```
+
+Ensure Cargo's binary directory (`~/.cargo/bin` on Unix, `%USERPROFILE%\.cargo\bin` on Windows) is on your `PATH`.
+
+See [PACKAGING.md](PACKAGING.md) for the release procedure.
 
 ## Usage
 
@@ -69,7 +79,7 @@ Except for the exact `--help` and `--version` invocations, arguments are passed 
 | Double-click a host | Connect; clicks must be within 450 ms |
 | Click a visible tab | Switch groups |
 | Mouse wheel over the list | Move selection and scroll |
-| `q`, Esc, Ctrl+C | Quit; standalone Esc can take up to one second |
+| `q`, Esc, Ctrl+C | Quit |
 
 All shows nonempty groups in their configured order, with aliases sorted within each group. Narrow windows show only the current tab. Exiting or connecting restores terminal settings and disables mouse reporting.
 
@@ -77,7 +87,7 @@ All shows nonempty groups in their configured order, with aliases sorted within 
 
 Hosts come from `~/.ssh/config`. Group rules are optional: without them, every host appears under **Other**.
 
-The default group configuration path is:
+On macOS and Linux, the default group configuration path is:
 
 ```text
 ${XDG_CONFIG_HOME:-$HOME/.config}/sshto/config
@@ -118,7 +128,7 @@ exclude|gitlab.*
 - `group|name` declares a group and its display order. `All` and `Other` are reserved; Other is added automatically at the end.
 - `match|group|field|glob` assigns a host to the **first matching rule**. Declare the group before referencing it.
 - `field` is `alias`, `hostname`, or `either`. Hostnames are resolved by `ssh -G`.
-- Patterns use Bash glob syntax (`*`, `?`, `[abc]`), not regular expressions. ASCII matching is case-insensitive.
+- 模式使用 Bash glob syntax（不啟用 extglob），支援 `*`、`?`、字元集合與範圍（`[abc]`、`[a-z]`）、`!`／`^` 否定、集合開頭的字面 `]`、POSIX 字元類別（`alpha`、`digit`、`alnum`、`upper`、`lower`、`space`、`blank`、`punct`、`print`、`graph`、`cntrl`、`xdigit`，例如 `[[:alpha:]]`），以及反斜線跳脫；未閉合的 `[` 視為字面字元。比對前會先將模式文字與比對對象的 ASCII 字母轉為小寫，字元類別也使用 ASCII 語意，因此 `[[:upper:]]` 無法匹配字母。
 - `exclude|glob` hides matching aliases from the menu without affecting direct connections.
 
 Use `|` as the field separator, with no surrounding whitespace or quotes. Empty lines and full-line comments beginning with `#` are ignored. Configuration is parsed as data: shell commands and variable expansion are not evaluated. Literal `|` and control characters are not supported in fields.
@@ -133,7 +143,17 @@ An explicitly selected missing file is an error. Installation and upgrades never
 
 ### Host discovery limits
 
-Only explicit `Host` aliases in `~/.ssh/config` are listed. Indentation, case-insensitive `Host` keywords, and multiple aliases on one line are supported; duplicate aliases are collapsed. Patterns containing `*`, `?`, or `!` are skipped. `Include` files are not expanded.
+Only explicit `Host` aliases in the main SSH configuration file are listed. Indentation, case-insensitive `Host` keywords, and multiple aliases on one line are supported; duplicate aliases are collapsed. Patterns containing `*`, `?`, or `!` are skipped. `Include` files are not expanded.
+
+## Windows
+
+sshto works from PowerShell and cmd in Windows Terminal and the classic console. Install a Windows release binary and ensure both `sshto.exe` and the OpenSSH client (`ssh.exe`) are on `PATH`.
+
+- SSH aliases: `%USERPROFILE%\.ssh\config`.
+- Group rules: `%APPDATA%\sshto\config`.
+- `SSHTO_CONFIG` overrides the group-rule path.
+
+Copy `examples/config` from the release archive to the group-rule path if you want custom groups; create the parent directory first. Installation does not create or replace either configuration file. In PowerShell, set an override with `$env:SSHTO_CONFIG = 'C:\path\to\config'`; in cmd, use `set "SSHTO_CONFIG=C:\path\to\config"`.
 
 ## Privacy
 
@@ -143,11 +163,17 @@ The release builder uses an explicit file allowlist and excludes personal config
 
 ## Development
 
+Install the Rust toolchain and Python 3.11 or newer for the Unix PTY suite and release builder.
+
 ```sh
+cargo build
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 python3 tests/verify.py
 ```
 
-The tests use isolated home directories, real pseudo-terminals, and an SSH stub. They check configuration, navigation, mouse handling, terminal restoration, argument forwarding, and release contents without connecting to remote hosts. Available system and Homebrew Bash installations are tested.
+Rust tests cover parsing, menu state, CLI behavior, and SSH argument forwarding. On macOS and Linux, `tests/verify.py` builds the binary and checks real pseudo-terminal interactions and release contents. On Windows, `tests/windows_menu.rs` drives the menu in the classic console and through ConPTY, launched from cmd and PowerShell. Tests use isolated home directories and SSH stubs without connecting to remote hosts. CI runs Rust checks on macOS, Linux, and Windows.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), and [PACKAGING.md](PACKAGING.md).
 

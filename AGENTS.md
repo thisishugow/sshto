@@ -1,35 +1,43 @@
 # AGENTS.md
 
-`sshto` is a single Bash script (`sshto`) that shows `~/.ssh/config` Host aliases in a grouped TUI menu and connects to the selected one.
+`sshto` is a Rust binary that groups SSH Host aliases in a terminal menu on macOS, Linux, and Windows.
 
 ## Commands
 
 ```sh
-/bin/bash -n sshto                                          # Syntax check
-python3 tests/verify.py                                     # Full suite (same as CI)
-python3 tests/verify.py MenuTests.test_cli_and_passthrough  # Single test
-python3 tools/package.py dist/preview                       # Preview build; output dir must not exist
+cargo build
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+python3 tests/verify.py               # Unix PTY and packaging tests; Python 3.11+
+python3 tools/package.py dist/preview # Output directory must not exist
 ```
 
-The suite runs against every installed Bash among `/bin/bash`, `/opt/homebrew/bin/bash`, and `/usr/local/bin/bash`. Release steps are in `PACKAGING.md`.
+## Modules
+
+- `main`: load configuration, validate the terminal, and dispatch CLI or menu actions.
+- `cli`: handle exact help/version invocations and preserve SSH arguments.
+- `config`: parse group rules as data and resolve platform-specific paths.
+- `hosts`: extract aliases, resolve SSH metadata, exclude, and classify hosts.
+- `menu`: manage pure navigation, layout, selection, scrolling, and mouse state.
+- `ui`: render frames, handle terminal events, and restore terminal state.
+- `ssh`: execute SSH on Unix; spawn and wait with the child exit code on Windows.
 
 ## Constraints
 
-- Stay compatible with macOS **Bash 3.2**: no associative arrays, `${var,,}`, `mapfile`, or other Bash 4+ features. State lives in parallel indexed arrays.
-- Runtime dependencies are OpenSSH, Perl, and standard utilities only. Python is for tests and packaging.
-- Parse group configuration as data. Never `source` or `eval` it.
-- Any invocation other than exactly `--help` or `--version` must `exec ssh "$@"` unchanged.
-- Leave the terminal clean: `cleanup` restores `stty` and disables mouse reporting, and `connect_selected` runs it before `exec ssh` so leftover mouse events never reach SSH.
-- The main loop's `read -t 1` timeout lets Bash 5 handle `WINCH`. Bash 3.2 returns 1 for both timeout and EOF, so `$SECONDS` is used to distinguish them; don't simplify this away.
+- Runtime requires an OpenSSH client; use existing Rust dependencies before adding more.
+- Parse group configuration as data; never evaluate shell commands or source files.
+- Only exactly `--help` or `--version` is handled locally; all other nonempty arguments pass unchanged to SSH. No arguments opens the menu.
+- Restore terminal state on every exit path, including connect, quit, errors, signals, and panic. Never exit while the terminal is modified.
+- On Windows, process only key-press events; ignore release and repeat events.
+- Preserve PTY frame delimiters and terminal restoration behavior used by `tests/verify.py`.
 
-## Tests
+## Tests and releases
 
-- `tests/verify.py` drives the script through real PTYs with an isolated `HOME` and an `ssh` stub on `PATH`. Never connect to a real host.
-- Use only fictional hostnames and documentation IPs (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24). Never commit personal SSH configuration or real inventories.
-- For interface changes, cover keyboard, mouse, narrow terminals, resize, and terminal restoration.
-
-## Releases
-
-- `tools/package.py` ships an explicit allowlist. To add a release file, update the allowlist, `PACKAGING.md`, and the expected list in the packaging test.
-- To bump the version, update the `sshto --version` output, the hardcoded versions in `tests/verify.py`, and `CHANGELOG.md`.
-- Update the README and `CHANGELOG.md` when behavior changes.
+- Tests use isolated homes and SSH stubs; never contact real hosts.
+- `tests/windows_menu.rs` (Windows only) injects conhost input records via `examples/win_console_driver.rs` and VT input via ConPTY; shared scenarios live in `tests/common/`.
+- Use fictional hostnames and documentation IPs only; never commit personal configuration, credentials, or real inventories.
+- Interface changes must cover keyboard, mouse, narrow terminals, resize, and restoration.
+- `Cargo.toml` is the only version source; use `env!("CARGO_PKG_VERSION")` in Rust and read the manifest in Python. Cargo updates the lockfile.
+- Source releases use an explicit allowlist; keep `tools/package.py`, its packaging test, and `PACKAGING.md` aligned.
+- Update README and CHANGELOG when behavior changes. Release instructions are in `PACKAGING.md`.

@@ -5,9 +5,11 @@ import hashlib
 from pathlib import Path
 import re
 import tarfile
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
-FILES = ("sshto", "README.md", "PACKAGING.md", "CHANGELOG.md", "CONTRIBUTING.md", "LICENSE", "assets/sshto.svg", "examples/config")
+FILES = ("Cargo.toml", "Cargo.lock", "src/cli.rs", "src/config.rs", "src/hosts.rs",
+         "src/main.rs", "src/menu.rs", "src/pattern.rs", "src/ssh.rs", "src/ui.rs", "README.md", "PACKAGING.md", "CHANGELOG.md", "CONTRIBUTING.md", "LICENSE", "assets/sshto.svg", "examples/config")
 
 
 def main():
@@ -22,10 +24,8 @@ def main():
         # Reject interpolation, escapes and injected Ruby code in generated URL strings.
         if value and not re.fullmatch(r"(?:https://|file:///)[A-Za-z0-9._~:/%+?=&-]+", value):
             parser.error("Use HTTPS (or local file:///); quotes, spaces and interpolation characters are not allowed")
-    match = re.search(r"printf 'sshto (\d+\.\d+\.\d+)\\n'", (ROOT / "sshto").read_text())
-    if not match:
-        parser.error("Cannot find the script version")
-    version = match[1]
+    with (ROOT / "Cargo.toml").open("rb") as manifest:
+        version = tomllib.load(manifest)["package"]["version"]
     args.output.mkdir(parents=True, exist_ok=False)
     archive = args.output / f"sshto-{version}.tar.gz"
     with tarfile.open(archive, "w:gz", format=tarfile.PAX_FORMAT) as tar:
@@ -35,7 +35,7 @@ def main():
                 raise ValueError(f"Only regular files are allowed: {name}")
             info = tarfile.TarInfo(f"sshto-{version}/{name}")
             info.size = path.stat().st_size
-            info.mode = 0o755 if name == "sshto" else 0o644
+            info.mode = 0o644
             # Do not include local ownership, working directory or file timestamps.
             with path.open("rb") as source:
                 tar.addfile(info, source)
