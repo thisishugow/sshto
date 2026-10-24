@@ -17,6 +17,62 @@ use std::{
     time::{Duration, Instant},
 };
 
+// Crossterm enables VT output and restores cooked input bits rather than the
+// exact original modes on Windows. Preserve both console buffers ourselves.
+#[cfg(windows)]
+mod console_modes {
+    use std::{
+        fs::{File, OpenOptions},
+        io,
+        os::windows::io::AsRawHandle,
+        sync::Mutex,
+    };
+    use windows_sys::Win32::System::Console::{GetConsoleMode, SetConsoleMode};
+
+    struct Mode {
+        handle: File,
+        value: u32,
+    }
+
+    impl Mode {
+        fn capture(name: &str) -> io::Result<Self> {
+            let handle = OpenOptions::new().read(true).write(true).open(name)?;
+            let mut value = 0;
+            if unsafe { GetConsoleMode(handle.as_raw_handle(), &mut value) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(Self { handle, value })
+        }
+
+        fn restore(self) -> io::Result<()> {
+            if unsafe { SetConsoleMode(self.handle.as_raw_handle(), self.value) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        }
+    }
+
+    static ORIGINAL: Mutex<Option<(Mode, Mode)>> = Mutex::new(None);
+
+    pub fn capture() -> io::Result<()> {
+        let input = Mode::capture("CONIN$")?;
+        let output = Mode::capture("CONOUT$")?;
+        *ORIGINAL.lock().unwrap() = Some((input, output));
+        Ok(())
+    }
+
+    pub fn restore() -> io::Result<()> {
+        let modes = ORIGINAL.lock().unwrap().take();
+        if let Some((input, output)) = modes {
+            // Attempt both restorations even if one fails.
+            let input = input.restore();
+            let output = output.restore();
+            return input.and(output);
+        }
+        Ok(())
+    }
+}
+
 // Nonblocking reads keep incomplete CSI sequences from blocking crossterm polling,
 // so SIGTERM and resize events can still be handled.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -77,6 +133,8 @@ fn restore_terminal() -> io::Result<()> {
     })();
     // Restore terminal mode even if display cleanup fails.
     let mode = terminal::disable_raw_mode();
+    #[cfg(windows)]
+    let mode = mode.and(console_modes::restore());
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let mode = flags.and(mode);
     display.and(mode)
@@ -93,9 +151,11 @@ impl TerminalGuard {
                 previous(info);
             }));
         });
-        terminal::enable_raw_mode()?;
+        #[cfg(windows)]
+        console_modes::capture()?;
         TERMINAL_ACTIVE.store(true, Ordering::SeqCst);
         let guard = Self;
+        terminal::enable_raw_mode()?;
         // Send Hide last so the test readiness marker signals completed initialization.
         execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture, Hide)?;
         Ok(guard)
