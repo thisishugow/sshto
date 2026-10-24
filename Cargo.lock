@@ -452,6 +452,7 @@ name = "sshto"
 version = "0.2.0"
 dependencies = [
  "crossterm",
+ "libc",
  "portable-pty",
  "serde_json",
  "signal-hook",

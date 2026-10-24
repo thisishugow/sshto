@@ -78,23 +78,13 @@ mod console_modes {
 // so termination signals and resize events can still be handled.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod input_flags {
+    use libc::{fcntl, F_GETFL, F_SETFL, O_NONBLOCK};
     use std::{
         io,
-        os::raw::c_int,
         sync::atomic::{AtomicI32, Ordering},
     };
 
-    const F_GETFL: c_int = 3;
-    const F_SETFL: c_int = 4;
-    #[cfg(target_os = "macos")]
-    const O_NONBLOCK: c_int = 0x0004;
-    #[cfg(target_os = "linux")]
-    const O_NONBLOCK: c_int = 0x0800;
     static ORIGINAL: AtomicI32 = AtomicI32::new(-1);
-
-    extern "C" {
-        fn fcntl(fd: c_int, command: c_int, ...) -> c_int;
-    }
 
     pub fn enable_nonblocking() -> io::Result<()> {
         // Startup checks ensure stdin is a terminal; fcntl does not take ownership.
