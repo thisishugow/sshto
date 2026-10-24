@@ -2,14 +2,6 @@
 
 User-facing changes are recorded here. Versions follow semantic versioning.
 
-## [Unreleased]
-
-### Fixed
-
-- 修復外部 SIGINT 中斷選單時未還原終端機的問題，並以狀態碼 130 結束。
-- 還原 Bash glob 比對語意，包含 POSIX 字元類別、跳脫字元與未閉合的左括號。
-- 修復兩次點擊之間的滑鼠移動中斷雙擊連線的問題；Unix 僅啟用點擊與 SGR 滑鼠回報。
-
 ## [0.2.0] - 2026-10-24
 
 ### Changed
