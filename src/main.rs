@@ -82,7 +82,7 @@ fn run_menu() -> Result<i32, String> {
 fn run() -> i32 {
     match cli::parse(std::env::args_os().skip(1).collect()) {
         cli::Invocation::Help => print!("{}", cli::HELP),
-        cli::Invocation::Version => println!("sshto 0.1.0"),
+        cli::Invocation::Version => println!("sshto {}", env!("CARGO_PKG_VERSION")),
         cli::Invocation::Passthrough(args) => {
             return connect(&args);
         }
