@@ -14,7 +14,7 @@ pub fn run(args: &[OsString]) -> io::Result<i32> {
     use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
 
     let mut child = Command::new("ssh").args(args).spawn()?;
-    // 在啟動 SSH 後才忽略 Ctrl+C，避免子程序繼承忽略設定。
+    // Ignore Ctrl+C after spawning SSH so the child does not inherit that setting.
     let ignored = unsafe { SetConsoleCtrlHandler(None, 1) } != 0;
     let control_error = (!ignored).then(io::Error::last_os_error);
     let status = child.wait();

@@ -190,6 +190,14 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn ssh_output_accepts_crlf() {
+        assert_eq!(
+            parse_ssh_output("hostname 192.0.2.10\r\nuser tester\r\n").display(),
+            "tester@192.0.2.10"
+        );
+    }
+
+    #[test]
     fn ssh_output_uses_last_exact_lowercase_key_with_space() {
         assert_eq!(
             parse_ssh_output(

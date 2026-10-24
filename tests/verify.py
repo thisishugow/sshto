@@ -313,7 +313,9 @@ class PackageTests(unittest.TestCase):
             formula = (out / 'Formula/sshto.rb').read_text()
             self.assertIn(hashlib.sha256(archive.read_bytes()).hexdigest(), formula)
             self.assertNotIn('@@', formula)
-            subprocess.run(['/usr/bin/ruby', '-c', str(out / 'Formula/sshto.rb')], check=True, capture_output=True)
+            ruby = shutil.which('ruby')
+            if ruby:
+                subprocess.run([ruby, '-c', str(out / 'Formula/sshto.rb')], check=True, capture_output=True)
 
 
 if __name__ == '__main__':

@@ -30,11 +30,6 @@ fn run_menu() -> Result<i32, String> {
     let ssh_config = home.join(".ssh").join("config");
     let text = std::fs::read_to_string(&ssh_config)
         .map_err(|_| format!("Cannot read {}", ssh_config.display()))?;
-    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-        return Err(
-            "The menu requires a terminal; use sshto <Host> for a direct connection.".into(),
-        );
-    }
 
     let explicit = std::env::var_os("SSHTO_CONFIG");
     #[cfg(unix)]
@@ -50,6 +45,11 @@ fn run_menu() -> Result<i32, String> {
     let environment = config::ConfigEnvironment::Windows { appdata: &appdata };
     let location = config::resolve_path(explicit.as_deref(), environment);
     let config = config::load(&location).map_err(|error| error.to_string())?;
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return Err(
+            "The menu requires a terminal; use sshto <Host> for a direct connection.".into(),
+        );
+    }
     let mut hosts = Vec::new();
     for alias in hosts::extract_aliases(&text) {
         if hosts::is_excluded(&config, &alias) {
@@ -100,6 +100,6 @@ fn run() -> i32 {
 }
 
 fn main() {
-    // run 返回前 UI 已完成終端還原，保留 Windows 子程序完整的結束碼。
+    // The UI is restored before run returns; preserve the full Windows child exit code.
     std::process::exit(run());
 }

@@ -1,8 +1,15 @@
 use std::ffi::OsString;
 
+#[cfg(unix)]
 pub const HELP: &str = "Usage: sshto [SSH arguments...]\n\
 Without arguments: open the menu using ~/.ssh/config.\n\
 Groups: ${XDG_CONFIG_HOME:-~/.config}/sshto/config; override with SSHTO_CONFIG.\n\
+Controls: 0 All, 1-9 groups, Tab/arrows to navigate, Enter/double-click to connect, q to quit.\n";
+
+#[cfg(windows)]
+pub const HELP: &str = "Usage: sshto [SSH arguments...]\n\
+Without arguments: open the menu using %USERPROFILE%\\.ssh\\config.\n\
+Groups: %APPDATA%\\sshto\\config; override with SSHTO_CONFIG.\n\
 Controls: 0 All, 1-9 groups, Tab/arrows to navigate, Enter/double-click to connect, q to quit.\n";
 
 #[derive(Debug, PartialEq, Eq)]

@@ -8,6 +8,10 @@ crossterm = "0.29"
 glob = "0.3"
 unicode-width = "0.2"
 
+[dev-dependencies]
+serde_json = "1"
+tempfile = "3"
+
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"
 

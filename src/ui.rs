@@ -17,8 +17,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-// crossterm 的 Unix reader 在未收齊 CSI 時會再讀一次 stdin；非阻塞模式讓
-// poll 的 timeout 仍能生效，SIGTERM 與 resize 才不會被半個輸入序列卡住。
+// Nonblocking reads keep incomplete CSI sequences from blocking crossterm polling,
+// so SIGTERM and resize events can still be handled.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod input_flags {
     use std::{
@@ -40,7 +40,7 @@ mod input_flags {
     }
 
     pub fn enable_nonblocking() -> io::Result<()> {
-        // stdin 已由啟動檢查確認為終端；fcntl 不會取得 descriptor 所有權。
+        // Startup checks ensure stdin is a terminal; fcntl does not take ownership.
         let original = unsafe { fcntl(0, F_GETFL) };
         if original == -1 || unsafe { fcntl(0, F_SETFL, original | O_NONBLOCK) } == -1 {
             return Err(io::Error::last_os_error());
@@ -65,8 +65,8 @@ fn restore_terminal() -> io::Result<()> {
     if !TERMINAL_ACTIVE.swap(false, Ordering::SeqCst) {
         return Ok(());
     }
-    // PTY 的 stdin/stdout 可能共用 open file description，先恢復 flags，
-    // 避免清理畫面時 stdout 因非阻塞模式回報 WouldBlock。
+    // PTY stdin and stdout may share an open file description. Restore flags first
+    // to prevent WouldBlock errors while clearing the display.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let flags = input_flags::restore();
     let mut output = io::stdout();
@@ -75,7 +75,7 @@ fn restore_terminal() -> io::Result<()> {
         output.write_all(b"\x1b[0m")?;
         execute!(output, Show, LeaveAlternateScreen)
     })();
-    // 即使畫面輸出失敗，仍必須恢復原本的終端模式。
+    // Restore terminal mode even if display cleanup fails.
     let mode = terminal::disable_raw_mode();
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let mode = flags.and(mode);
@@ -96,7 +96,7 @@ impl TerminalGuard {
         terminal::enable_raw_mode()?;
         TERMINAL_ACTIVE.store(true, Ordering::SeqCst);
         let guard = Self;
-        // Hide 最後送出，讓測試的 readiness 標記代表終端已完成初始化。
+        // Send Hide last so the test readiness marker signals completed initialization.
         execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture, Hide)?;
         Ok(guard)
     }
@@ -137,6 +137,10 @@ impl Drop for Termination {
         #[cfg(unix)]
         signal_hook::low_level::unregister(self.registration);
     }
+}
+
+fn pressed_key(event: KeyEvent) -> Option<Key> {
+    (event.kind == KeyEventKind::Press).then(|| key(event))
 }
 
 fn key(event: KeyEvent) -> Key {
@@ -307,7 +311,7 @@ fn read_event(timeout: Duration) -> io::Result<Option<Event>> {
             Ok(None)
         }
     })();
-    // 只在讀取事件期間使用非阻塞模式；繪圖與 SSH 都繼承原 flags。
+    // Use nonblocking mode only while reading events; drawing and SSH keep the original flags.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         let restored = input_flags::restore();
@@ -331,7 +335,10 @@ pub fn run(menu: &mut Menu) -> io::Result<Action> {
             continue;
         };
         let action = match event {
-            Event::Key(event) if event.kind != KeyEventKind::Release => menu.handle_key(key(event)),
+            Event::Key(event) => match pressed_key(event) {
+                Some(key) => menu.handle_key(key),
+                None => continue,
+            },
             Event::Mouse(event) => {
                 menu.handle_mouse(mouse(event), started.elapsed().as_millis() as u64)
             }
@@ -349,7 +356,7 @@ pub fn run(menu: &mut Menu) -> io::Result<Action> {
     };
     if matches!(action, Action::Connect(_)) {
         execute!(io::stdout(), DisableMouseCapture)?;
-        // 同時清掉 crossterm 已解析的事件與尚留在 tty 的輸入，避免傳給 SSH。
+        // Drain both parsed crossterm events and pending terminal input before SSH.
         while read_event(Duration::from_millis(20))?.is_some() {
             if termination.requested() {
                 break;
@@ -367,6 +374,32 @@ pub fn run(menu: &mut Menu) -> io::Result<Action> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_key_presses_produce_actions() {
+        for (code, modifiers, expected) in [
+            (KeyCode::Down, KeyModifiers::NONE, Key::Down),
+            (KeyCode::Tab, KeyModifiers::NONE, Key::Tab),
+            (KeyCode::Char('1'), KeyModifiers::NONE, Key::Digit(1)),
+            (KeyCode::Enter, KeyModifiers::NONE, Key::Enter),
+            (KeyCode::Char('q'), KeyModifiers::NONE, Key::Quit),
+            (KeyCode::Char('c'), KeyModifiers::CONTROL, Key::Interrupt),
+            (KeyCode::Char('d'), KeyModifiers::CONTROL, Key::Quit),
+            (KeyCode::Char('x'), KeyModifiers::ALT, Key::Quit),
+        ] {
+            for kind in [
+                KeyEventKind::Press,
+                KeyEventKind::Release,
+                KeyEventKind::Repeat,
+            ] {
+                assert_eq!(
+                    pressed_key(KeyEvent::new_with_kind(code, modifiers, kind)),
+                    (kind == KeyEventKind::Press).then_some(expected),
+                    "{code:?} {modifiers:?} {kind:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn keys_preserve_exit_codes_and_ignore_modified_arrows() {

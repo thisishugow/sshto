@@ -10,15 +10,21 @@ permissions:
 
 jobs:
   test:
-    runs-on: macos-latest
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Install Bash 5 for compatibility checks
-        run: brew install bash
-      - name: Check Bash syntax
-        run: /bin/bash -n sshto
+      - name: Check Rust formatting
+        run: cargo fmt --check
+      - name: Lint all Rust targets
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Run Rust tests
+        run: cargo test
       - name: Run isolated PTY and packaging tests
+        if: runner.os != 'Windows'
         run: python3 tests/verify.py
