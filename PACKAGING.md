@@ -9,7 +9,7 @@ Source archives support Homebrew and local Rust builds. Binary archives let macO
 `tools/package.py` requires Python 3.11 or newer, reads the version from `Cargo.toml`, and packages only these files under `sshto-<version>/`:
 
 - `Cargo.toml`, `Cargo.lock`
-- `src/cli.rs`, `src/config.rs`, `src/hosts.rs`, `src/main.rs`, `src/menu.rs`, `src/ssh.rs`, `src/ui.rs`
+- `src/cli.rs`, `src/config.rs`, `src/hosts.rs`, `src/main.rs`, `src/menu.rs`, `src/pattern.rs`, `src/ssh.rs`, `src/ui.rs`
 - `README.md`, `PACKAGING.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `LICENSE`
 - `assets/sshto.svg`, `examples/config`
 

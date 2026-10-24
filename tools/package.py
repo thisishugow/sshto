@@ -9,7 +9,7 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ("Cargo.toml", "Cargo.lock", "src/cli.rs", "src/config.rs", "src/hosts.rs",
-         "src/main.rs", "src/menu.rs", "src/ssh.rs", "src/ui.rs", "README.md", "PACKAGING.md", "CHANGELOG.md", "CONTRIBUTING.md", "LICENSE", "assets/sshto.svg", "examples/config")
+         "src/main.rs", "src/menu.rs", "src/pattern.rs", "src/ssh.rs", "src/ui.rs", "README.md", "PACKAGING.md", "CHANGELOG.md", "CONTRIBUTING.md", "LICENSE", "assets/sshto.svg", "examples/config")
 
 
 def main():

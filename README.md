@@ -128,7 +128,7 @@ exclude|gitlab.*
 - `group|name` declares a group and its display order. `All` and `Other` are reserved; Other is added automatically at the end.
 - `match|group|field|glob` assigns a host to the **first matching rule**. Declare the group before referencing it.
 - `field` is `alias`, `hostname`, or `either`. Hostnames are resolved by `ssh -G`.
-- Patterns use Bash glob syntax (`*`, `?`, `[abc]`), not regular expressions. ASCII matching is case-insensitive.
+- 模式使用 Bash glob syntax（不啟用 extglob），支援 `*`、`?`、字元集合與範圍（`[abc]`、`[a-z]`）、`!`／`^` 否定、集合開頭的字面 `]`、POSIX 字元類別（`alpha`、`digit`、`alnum`、`upper`、`lower`、`space`、`blank`、`punct`、`print`、`graph`、`cntrl`、`xdigit`，例如 `[[:alpha:]]`），以及反斜線跳脫；未閉合的 `[` 視為字面字元。比對前會先將模式文字與比對對象的 ASCII 字母轉為小寫，字元類別也使用 ASCII 語意，因此 `[[:upper:]]` 無法匹配字母。
 - `exclude|glob` hides matching aliases from the menu without affecting direct connections.
 
 Use `|` as the field separator, with no surrounding whitespace or quotes. Empty lines and full-line comments beginning with `#` are ignored. Configuration is parsed as data: shell commands and variable expansion are not evaluated. Literal `|` and control characters are not supported in fields.

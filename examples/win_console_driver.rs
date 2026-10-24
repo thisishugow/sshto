@@ -302,6 +302,15 @@ mod windows {
                     }
                     self.records(&records);
                 }
+                Input::DoubleClickWithMotion { x, y } => {
+                    self.records(&[
+                        Self::mouse(x, y, FROM_LEFT_1ST_BUTTON_PRESSED, 0),
+                        Self::mouse(x, y, 0, 0),
+                        Self::mouse(x + 1, y, 0, MOUSE_MOVED),
+                        Self::mouse(x, y, FROM_LEFT_1ST_BUTTON_PRESSED, DOUBLE_CLICK),
+                        Self::mouse(x, y, 0, 0),
+                    ]);
+                }
                 Input::Wheel { down } => {
                     let delta: i16 = if down { -120 } else { 120 };
                     self.records(&[Self::mouse(

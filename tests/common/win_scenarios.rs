@@ -20,6 +20,7 @@ pub const SCENARIOS: &[&str] = &[
     "mouse-tab",
     "mouse-single",
     "mouse-double",
+    "mouse-double-motion",
     "mouse-heading",
     "wheel-down",
     "wheel-up",
@@ -44,6 +45,7 @@ pub enum Key {
 pub enum Input {
     Key(Key),
     Click { x: u16, y: u16, double: bool },
+    DoubleClickWithMotion { x: u16, y: u16 },
     Wheel { down: bool },
 }
 
@@ -196,6 +198,10 @@ pub fn run(terminal: &mut impl Terminal, scenario: &str, log: &Path) {
             });
             alias = Some("work-b");
         }
+        "mouse-double-motion" => {
+            terminal.send(Input::DoubleClickWithMotion { x: 8, y: 5 });
+            alias = Some("work-b");
+        }
         "mouse-heading" => {
             terminal.send(Input::Click {
                 x: 5,
@@ -219,7 +225,7 @@ pub fn run(terminal: &mut impl Terminal, scenario: &str, log: &Path) {
         }
         _ => panic!("unknown scenario {scenario}"),
     }
-    if scenario != "mouse-double" {
+    if !matches!(scenario, "mouse-double" | "mouse-double-motion") {
         terminal.send(Input::Key(exit_key));
     }
     let deadline = Instant::now() + TIMEOUT;

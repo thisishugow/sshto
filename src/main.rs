@@ -2,6 +2,7 @@ pub mod cli;
 pub mod config;
 pub mod hosts;
 pub mod menu;
+pub mod pattern;
 pub mod ssh;
 pub mod ui;
 

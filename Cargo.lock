@@ -150,12 +150,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "glob"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
-
-[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -458,7 +452,6 @@ name = "sshto"
 version = "0.2.0"
 dependencies = [
  "crossterm",
- "glob",
  "portable-pty",
  "serde_json",
  "signal-hook",

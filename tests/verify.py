@@ -285,6 +285,28 @@ else:
         self.assertEqual(self.connections()[-1], ['office-ts'])
         self.log.unlink()
 
+    def test_mouse_motion_between_clicks_still_connects(self):
+        s = self.start()
+        s.send(self.click(5, 4) + b'\x1b[<35;6;4M' + self.click(5, 4))
+        self.assertEqual(s.wait(), 0, s.data.decode())
+        self.assertEqual(self.connections(), [['cloud-ts']])
+
+    def test_external_sigint_restores_terminal(self):
+        s = self.start()
+        self.assertFalse(termios.tcgetattr(s.fd)[3] & termios.ECHO)
+        os.kill(s.pid, signal.SIGINT)
+        self.assertEqual(s.wait(), 130, s.data.decode())
+        for event in (b'\x1b[?1000l', b'\x1b[?1006l', b'\x1b[?25h', b'\x1b[?1049l'):
+            self.assertIn(event, s.data)
+        self.assertTrue(termios.tcgetattr(s.fd)[3] & termios.ECHO)
+
+    def test_mouse_capture_does_not_request_motion(self):
+        s = self.start()
+        self.assertIn(b'\x1b[?1000h\x1b[?1006h', s.data)
+        for mode in (b'\x1b[?1002h', b'\x1b[?1003h'):
+            self.assertNotIn(mode, s.data)
+        self.finish(s)
+
     def test_cli_and_passthrough(self):
         argv = ['-p', '2222', 'my-host', 'printf', 'space value', 'literal;$HOME']
         result = subprocess.run([str(BIN), *argv], env=self.env, capture_output=True)
@@ -311,7 +333,7 @@ class PackageTests(unittest.TestCase):
                 self.assertEqual(set(tar.getnames()), {
                     f'sshto-{VERSION}/' + name for name in [
                         'Cargo.toml', 'Cargo.lock', 'src/cli.rs', 'src/config.rs', 'src/hosts.rs',
-                        'src/main.rs', 'src/menu.rs', 'src/ssh.rs', 'src/ui.rs', 'README.md', 'PACKAGING.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'LICENSE', 'assets/sshto.svg', 'examples/config']})
+                        'src/main.rs', 'src/menu.rs', 'src/pattern.rs', 'src/ssh.rs', 'src/ui.rs', 'README.md', 'PACKAGING.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'LICENSE', 'assets/sshto.svg', 'examples/config']})
                 for entry in tar:
                     self.assertTrue(entry.isfile())
                     self.assertEqual((entry.mode, entry.mtime), (0o644, 0))

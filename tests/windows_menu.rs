@@ -234,6 +234,10 @@ impl Terminal for ConPty {
                     click
                 }
             }
+            Input::DoubleClickWithMotion { x, y } => {
+                let click = format!("\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m");
+                format!("{click}\x1b[<35;{};{y}M{click}", x + 1)
+            }
             Input::Wheel { down } => format!("\x1b[<{};8;5M", if down { 65 } else { 64 }),
         };
         let mut writer = self.writer.lock().unwrap();
@@ -315,6 +319,7 @@ scenario!(ctrl_c_exits_130, "interrupt");
 scenario!(click_tab, "mouse-tab");
 scenario!(single_click_only_selects, "mouse-single");
 scenario!(double_click_connects, "mouse-double");
+scenario!(double_click_with_motion_connects, "mouse-double-motion");
 scenario!(heading_does_not_connect, "mouse-heading");
 scenario!(wheel_down_once, "wheel-down");
 scenario!(wheel_up_once, "wheel-up");

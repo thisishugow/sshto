@@ -1,4 +1,4 @@
-use glob::Pattern;
+use crate::pattern::Pattern;
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
@@ -98,34 +98,6 @@ pub fn load(location: &ConfigPath) -> Result<Config, ConfigError> {
     parse(&location.path, &text)
 }
 
-fn compile_glob(pattern: &str) -> Result<Pattern, String> {
-    let mut translated = String::new();
-    let mut chars = pattern.chars().peekable();
-    while let Some(ch) = chars.next() {
-        translated.push(ch);
-        if ch != '[' {
-            continue;
-        }
-        if chars.peek() == Some(&'^') {
-            chars.next();
-            translated.push('!');
-        } else if chars.peek() == Some(&'!') {
-            translated.push(chars.next().unwrap());
-        }
-        // A closing bracket at the start of a class is a literal member.
-        if chars.peek() == Some(&']') {
-            translated.push(chars.next().unwrap());
-        }
-        for member in chars.by_ref() {
-            translated.push(member);
-            if member == ']' {
-                break;
-            }
-        }
-    }
-    Pattern::new(&translated.to_ascii_lowercase()).map_err(|error| format!("Invalid glob: {error}"))
-}
-
 pub fn parse(path: &Path, text: &str) -> Result<Config, ConfigError> {
     let mut config = Config {
         labels: Vec::new(),
@@ -188,7 +160,7 @@ pub fn parse(path: &Path, text: &str) -> Result<Config, ConfigError> {
                 config.rules.push(Rule {
                     group,
                     field,
-                    pattern: compile_glob(c).map_err(|message| error(&message))?,
+                    pattern: Pattern::new(&c.to_ascii_lowercase()),
                 });
             }
             "exclude" => {
@@ -197,7 +169,7 @@ pub fn parse(path: &Path, text: &str) -> Result<Config, ConfigError> {
                 }
                 config
                     .exclusions
-                    .push(compile_glob(a).map_err(|message| error(&message))?);
+                    .push(Pattern::new(&a.to_ascii_lowercase()));
             }
             _ => return Err(error("Unknown directive; expected group, match or exclude")),
         }
@@ -297,6 +269,17 @@ mod tests {
     }
 
     #[test]
+    fn posix_classes_exclude_and_match_after_lowercasing() {
+        let config = parse(
+            Path::new("rules"),
+            "group|Upper\ngroup|Lower\nmatch|Upper|alias|[[:upper:]]\nmatch|Lower|alias|[[:lower:]]\nexclude|work-[[:alpha:]]",
+        ).unwrap();
+        assert!(crate::hosts::is_excluded(&config, "work-A"));
+        assert!(!crate::hosts::is_excluded(&config, "work-1"));
+        assert_eq!(crate::hosts::classify(&config, "A", ""), 1);
+    }
+
+    #[test]
     fn names_are_data_and_whitespace_is_preserved() {
         let directory = std::env::temp_dir().join(format!("sshto-data-{}", std::process::id()));
         fs::create_dir(&directory).unwrap();
@@ -314,18 +297,21 @@ mod tests {
     }
 
     #[test]
-    fn negated_brackets_and_invalid_globs() {
-        assert_eq!(compile_glob("[^A]*").unwrap().as_str(), "[!a]*");
-        assert_eq!(compile_glob("[!A]*").unwrap().as_str(), "[!a]*");
-        assert_eq!(compile_glob("[[^]x").unwrap().as_str(), "[[^]x");
-        for text in ["exclude|[", "group|X\nmatch|X|alias|["] {
-            let error = parse(Path::new("rules"), text).unwrap_err();
-            assert_eq!(error.line, text.split('\n').count());
-            assert_eq!(
-                error.message,
-                format!("Invalid glob: {}", Pattern::new("[").unwrap_err())
-            );
+    fn negated_brackets_and_unclosed_brackets_are_patterns() {
+        for pattern in ["[^A]*", "[!A]*"] {
+            let config = parse(Path::new("rules"), &format!("exclude|{pattern}")).unwrap();
+            assert!(crate::hosts::is_excluded(&config, "b"));
+            assert!(!crate::hosts::is_excluded(&config, "A"));
         }
+        let config = parse(
+            Path::new("rules"),
+            "group|X\nmatch|X|alias|[\nexclude|unclosed[",
+        )
+        .unwrap();
+        assert_eq!(crate::hosts::classify(&config, "[", ""), 0);
+        assert_eq!(crate::hosts::classify(&config, "x", ""), 1);
+        assert!(crate::hosts::is_excluded(&config, "UNCLOSED["));
+        assert!(!crate::hosts::is_excluded(&config, "unclosed"));
     }
 
     #[test]

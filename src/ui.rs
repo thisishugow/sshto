@@ -1,9 +1,10 @@
 use crate::menu::{self, Action, DisplayRow, Header, Key, Menu, MousePhase};
+#[cfg(windows)]
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::{
     cursor::{Hide, Show},
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-        KeyModifiers, MouseButton, MouseEventKind,
+        self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
     },
     execute,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
@@ -11,7 +12,7 @@ use crossterm::{
 use std::{
     io::{self, Write},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Once,
     },
     time::{Duration, Instant},
@@ -74,7 +75,7 @@ mod console_modes {
 }
 
 // Nonblocking reads keep incomplete CSI sequences from blocking crossterm polling,
-// so SIGTERM and resize events can still be handled.
+// so termination signals and resize events can still be handled.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod input_flags {
     use std::{
@@ -117,6 +118,22 @@ mod input_flags {
 static TERMINAL_ACTIVE: AtomicBool = AtomicBool::new(false);
 static PANIC_HOOK: Once = Once::new();
 
+fn enable_mouse(output: &mut impl Write) -> io::Result<()> {
+    #[cfg(unix)]
+    output.write_all(b"\x1b[?1000h\x1b[?1006h")?;
+    #[cfg(windows)]
+    execute!(output, EnableMouseCapture)?;
+    output.flush()
+}
+
+fn disable_mouse(output: &mut impl Write) -> io::Result<()> {
+    #[cfg(unix)]
+    output.write_all(b"\x1b[?1000l\x1b[?1006l")?;
+    #[cfg(windows)]
+    execute!(output, DisableMouseCapture)?;
+    output.flush()
+}
+
 fn restore_terminal() -> io::Result<()> {
     if !TERMINAL_ACTIVE.swap(false, Ordering::SeqCst) {
         return Ok(());
@@ -127,7 +144,7 @@ fn restore_terminal() -> io::Result<()> {
     let flags = input_flags::restore();
     let mut output = io::stdout();
     let display = (|| {
-        execute!(output, DisableMouseCapture)?;
+        disable_mouse(&mut output)?;
         output.write_all(b"\x1b[0m")?;
         execute!(output, Show, LeaveAlternateScreen)
     })();
@@ -157,7 +174,10 @@ impl TerminalGuard {
         let guard = Self;
         terminal::enable_raw_mode()?;
         // Send Hide last so the test readiness marker signals completed initialization.
-        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture, Hide)?;
+        let mut output = io::stdout();
+        execute!(output, EnterAlternateScreen)?;
+        enable_mouse(&mut output)?;
+        execute!(output, Hide)?;
         Ok(guard)
     }
 }
@@ -169,33 +189,48 @@ impl Drop for TerminalGuard {
 }
 
 struct Termination {
-    requested: Arc<AtomicBool>,
+    exit_code: Arc<AtomicUsize>,
     #[cfg(unix)]
-    registration: signal_hook::SigId,
+    registrations: Vec<signal_hook::SigId>,
 }
 
 impl Termination {
     fn new() -> io::Result<Self> {
-        let requested = Arc::new(AtomicBool::new(false));
-        #[cfg(unix)]
-        let registration =
-            signal_hook::flag::register(signal_hook::consts::SIGTERM, requested.clone())?;
-        Ok(Self {
-            requested,
+        let termination = Self {
+            exit_code: Arc::new(AtomicUsize::new(0)),
             #[cfg(unix)]
-            registration,
-        })
+            registrations: Vec::new(),
+        };
+        #[cfg(unix)]
+        {
+            let mut termination = termination;
+            for signal in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
+                termination
+                    .registrations
+                    .push(signal_hook::flag::register_usize(
+                        signal,
+                        termination.exit_code.clone(),
+                        128 + signal as usize,
+                    )?);
+            }
+            Ok(termination)
+        }
+        #[cfg(not(unix))]
+        Ok(termination)
     }
 
-    fn requested(&self) -> bool {
-        self.requested.load(Ordering::Relaxed)
+    fn exit_code(&self) -> Option<u8> {
+        let code = self.exit_code.load(Ordering::Relaxed);
+        (code != 0).then_some(code as u8)
     }
 }
 
 impl Drop for Termination {
     fn drop(&mut self) {
         #[cfg(unix)]
-        signal_hook::low_level::unregister(self.registration);
+        for registration in &self.registrations {
+            signal_hook::low_level::unregister(*registration);
+        }
     }
 }
 
@@ -229,7 +264,7 @@ fn key(event: KeyEvent) -> Key {
     }
 }
 
-fn mouse(event: event::MouseEvent) -> menu::MouseEvent {
+fn mouse(event: event::MouseEvent) -> Option<menu::MouseEvent> {
     let button_code = |button| match button {
         MouseButton::Left => 0,
         MouseButton::Middle => 1,
@@ -238,8 +273,7 @@ fn mouse(event: event::MouseEvent) -> menu::MouseEvent {
     let (mut button, phase) = match event.kind {
         MouseEventKind::Down(button) => (button_code(button), MousePhase::Press),
         MouseEventKind::Up(button) => (button_code(button), MousePhase::Release),
-        MouseEventKind::Drag(button) => (32 + button_code(button), MousePhase::Press),
-        MouseEventKind::Moved => (35, MousePhase::Press),
+        MouseEventKind::Drag(_) | MouseEventKind::Moved => return None,
         MouseEventKind::ScrollUp => (64, MousePhase::Press),
         MouseEventKind::ScrollDown => (65, MousePhase::Press),
         MouseEventKind::ScrollLeft => (66, MousePhase::Press),
@@ -254,12 +288,12 @@ fn mouse(event: event::MouseEvent) -> menu::MouseEvent {
             button |= bit;
         }
     }
-    menu::MouseEvent {
+    Some(menu::MouseEvent {
         button,
         x: usize::from(event.column) + 1,
         y: usize::from(event.row) + 1,
         phase,
-    }
+    })
 }
 
 fn render(menu: &mut Menu, rows: u16, cols: u16) -> Vec<u8> {
@@ -388,8 +422,8 @@ pub fn run(menu: &mut Menu) -> io::Result<Action> {
     let (mut cols, mut rows) = terminal::size()?;
     draw(menu, rows, cols)?;
     let action = loop {
-        if termination.requested() {
-            break Action::Exit(143);
+        if let Some(code) = termination.exit_code() {
+            break Action::Exit(code);
         }
         let Some(event) = read_event(Duration::from_millis(50))? else {
             continue;
@@ -399,9 +433,10 @@ pub fn run(menu: &mut Menu) -> io::Result<Action> {
                 Some(key) => menu.handle_key(key),
                 None => continue,
             },
-            Event::Mouse(event) => {
-                menu.handle_mouse(mouse(event), started.elapsed().as_millis() as u64)
-            }
+            Event::Mouse(event) => match mouse(event) {
+                Some(event) => menu.handle_mouse(event, started.elapsed().as_millis() as u64),
+                None => continue,
+            },
             Event::Resize(new_cols, new_rows) => {
                 menu.mark_resized();
                 (cols, rows) = (new_cols, new_rows);
@@ -415,20 +450,16 @@ pub fn run(menu: &mut Menu) -> io::Result<Action> {
         draw(menu, rows, cols)?;
     };
     if matches!(action, Action::Connect(_)) {
-        execute!(io::stdout(), DisableMouseCapture)?;
+        disable_mouse(&mut io::stdout())?;
         // Drain both parsed crossterm events and pending terminal input before SSH.
         while read_event(Duration::from_millis(20))?.is_some() {
-            if termination.requested() {
+            if termination.exit_code().is_some() {
                 break;
             }
         }
     }
     restore_terminal()?;
-    Ok(if termination.requested() {
-        Action::Exit(143)
-    } else {
-        action
-    })
+    Ok(termination.exit_code().map_or(action, Action::Exit))
 }
 
 #[cfg(test)]
@@ -486,13 +517,34 @@ mod tests {
         };
         assert_eq!(
             mouse(event),
-            menu::MouseEvent {
+            Some(menu::MouseEvent {
                 button: 81,
                 x: 5,
                 y: 4,
                 phase: MousePhase::Press,
-            }
+            })
         );
+    }
+
+    #[test]
+    fn mouse_motion_and_drag_do_not_produce_menu_events() {
+        for kind in [
+            MouseEventKind::Moved,
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Middle),
+            MouseEventKind::Drag(MouseButton::Right),
+        ] {
+            assert_eq!(
+                mouse(event::MouseEvent {
+                    kind,
+                    column: 5,
+                    row: 3,
+                    modifiers: KeyModifiers::NONE,
+                }),
+                None,
+                "{kind:?}"
+            );
+        }
     }
 
     #[test]

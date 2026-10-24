@@ -1,5 +1,5 @@
 use crate::config::{Config, Field};
-use glob::{MatchOptions, Pattern};
+use crate::pattern::Pattern;
 use std::process::{Command, Stdio};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -71,14 +71,7 @@ pub fn resolve(alias: &str) -> Result<SshInfo, String> {
 }
 
 fn matches(pattern: &Pattern, value: &str) -> bool {
-    pattern.matches_with(
-        value,
-        MatchOptions {
-            case_sensitive: false,
-            require_literal_separator: false,
-            require_literal_leading_dot: false,
-        },
-    )
+    pattern.matches(&value.to_ascii_lowercase())
 }
 
 pub fn is_excluded(config: &Config, alias: &str) -> bool {
