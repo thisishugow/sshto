@@ -1,5 +1,6 @@
 # Generated release artifacts and Python caches
 /dist/
+/target/
 __pycache__/
 *.py[cod]
 
