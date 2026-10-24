@@ -16,7 +16,8 @@ Groups: %APPDATA%\\sshto\\config; override with SSHTO_CONFIG.\n";
         "Usage: sshto [SSH arguments...]\n{paths}\
 Controls: 0 All, 1-9 groups, Tab/arrows to navigate, Enter/double-click to connect, q to quit.\n"
     );
-    for (arg, expected) in [("--help", help.as_str()), ("--version", "sshto 0.1.0\n")] {
+    let version = format!("sshto {}\n", env!("CARGO_PKG_VERSION"));
+    for (arg, expected) in [("--help", help.as_str()), ("--version", version.as_str())] {
         let output = fixture.command().arg(arg).output().unwrap();
         assert!(output.status.success());
         assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);

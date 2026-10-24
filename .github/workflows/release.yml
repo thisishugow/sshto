@@ -1,0 +1,142 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths: ['.github/workflows/release.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      TARGET: ${{ matrix.target }}
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install musl tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+      - name: Build binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package binary
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          import tarfile
+          import tomllib
+          import zipfile
+
+          version = tomllib.loads(Path('Cargo.toml').read_text())['package']['version']
+          target = os.environ['TARGET']
+          binary = 'sshto.exe' if 'windows' in target else 'sshto'
+          files = [(Path('target') / target / 'release' / binary, binary)]
+          files += [(Path(name), name) for name in ('README.md', 'LICENSE', 'examples/config')]
+          Path('dist').mkdir()
+          stem = f'dist/sshto-{version}-{target}'
+          if 'windows' in target:
+              with zipfile.ZipFile(stem + '.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
+                  for path, name in files:
+                      archive.write(path, name)
+          else:
+              with tarfile.open(stem + '.tar.gz', 'w:gz') as archive:
+                  for path, name in files:
+                      archive.add(path, arcname=name, recursive=False)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binary-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  assemble:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify release tag
+        if: github.event_name == 'push'
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          import tomllib
+
+          version = tomllib.loads(Path('Cargo.toml').read_text())['package']['version']
+          if os.environ['GITHUB_REF_NAME'] != f'v{version}':
+              raise SystemExit('Release tag must equal v + Cargo.toml version')
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: binary-*
+          path: dist
+          merge-multiple: true
+      - name: Build source archive
+        run: python3 tools/package.py source-release
+      - name: Collect archives and checksums
+        shell: python
+        run: |
+          import hashlib
+          from pathlib import Path
+          import shutil
+
+          for archive in Path('source-release').glob('*.tar.gz'):
+              shutil.move(str(archive), 'dist')
+          assets = sorted(Path('dist').iterdir())
+          if len(assets) != 7:
+              raise SystemExit('Expected six binary archives and one source archive')
+          checksums = ''.join(
+              f'{hashlib.sha256(asset.read_bytes()).hexdigest()}  {asset.name}\n'
+              for asset in assets
+          )
+          Path('dist/SHA256SUMS').write_text(checksums)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: assemble
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: dist
+      - name: Publish GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "$GITHUB_REF_NAME" --generate-notes

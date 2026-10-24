@@ -18,9 +18,12 @@ import tarfile
 import tempfile
 import termios
 import time
+import tomllib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+with (ROOT / "Cargo.toml").open("rb") as manifest:
+    VERSION = tomllib.load(manifest)["package"]["version"]
 BIN = Path(os.environ.get('SSHTO_TEST_BIN', str(ROOT / 'target/debug/sshto')))
 if 'SSHTO_TEST_BIN' not in os.environ:
     subprocess.run(['cargo', 'build'], cwd=ROOT, check=True)
@@ -287,7 +290,7 @@ else:
         result = subprocess.run([str(BIN), *argv], env=self.env, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         self.assertEqual(self.connections()[-1], argv)
-        for arg, expected in [('--version', 'sshto 0.1.0'), ('--help', 'SSHTO_CONFIG')]:
+        for arg, expected in [('--version', f'sshto {VERSION}'), ('--help', 'SSHTO_CONFIG')]:
             result = subprocess.run([str(BIN), arg], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0)
             self.assertIn(expected, result.stdout)
@@ -297,21 +300,30 @@ class PackageTests(unittest.TestCase):
     def test_archive_allowlist_metadata_and_formula_checksum(self):
         with tempfile.TemporaryDirectory(prefix='sshto-package-test-') as temp:
             root = Path(temp) / 'source'
-            shutil.copytree(ROOT, root, ignore=shutil.ignore_patterns('__pycache__', '.git', 'dist'))
+            shutil.copytree(ROOT, root, ignore=shutil.ignore_patterns('__pycache__', '.git', 'dist', 'target'))
             (root / 'personal-secret').write_text('PRIVATE_SENTINEL_NOT_FOR_RELEASE')
             out = Path(temp) / 'release'
             subprocess.run([sys.executable, str(root / 'tools/package.py'), str(out),
-                            '--url', 'https://example.com/sshto-0.1.0.tar.gz',
+                            '--url', f'https://example.com/sshto-{VERSION}.tar.gz',
                             '--homepage', 'https://example.com/sshto'], check=True, capture_output=True)
-            archive = out / 'sshto-0.1.0.tar.gz'
+            archive = out / f'sshto-{VERSION}.tar.gz'
             with tarfile.open(archive) as tar:
                 self.assertEqual(set(tar.getnames()), {
-                    'sshto-0.1.0/' + name for name in ['sshto', 'README.md', 'PACKAGING.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'LICENSE', 'assets/sshto.svg', 'examples/config']})
+                    f'sshto-{VERSION}/' + name for name in [
+                        'Cargo.toml', 'Cargo.lock', 'src/cli.rs', 'src/config.rs', 'src/hosts.rs',
+                        'src/main.rs', 'src/menu.rs', 'src/ssh.rs', 'src/ui.rs', 'README.md', 'PACKAGING.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'LICENSE', 'assets/sshto.svg', 'examples/config']})
                 for entry in tar:
+                    self.assertTrue(entry.isfile())
+                    self.assertEqual((entry.mode, entry.mtime), (0o644, 0))
                     self.assertEqual((entry.uid, entry.gid, entry.uname, entry.gname), (0, 0, '', ''))
                     self.assertNotIn(b'PRIVATE_SENTINEL_NOT_FOR_RELEASE', tar.extractfile(entry).read())
             formula = (out / 'Formula/sshto.rb').read_text()
-            self.assertIn(hashlib.sha256(archive.read_bytes()).hexdigest(), formula)
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            self.assertIn(digest, formula)
+            self.assertEqual((out / "SHA256SUMS").read_text(), f"{digest}  {archive.name}\n")
+            self.assertIn('depends_on "rust" => :build', formula)
+            self.assertIn('system "cargo", "install", *std_cargo_args', formula)
+            self.assertNotIn("depends_on :macos", formula)
             self.assertNotIn('@@', formula)
             ruby = shutil.which('ruby')
             if ruby:

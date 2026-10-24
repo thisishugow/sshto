@@ -1,17 +1,19 @@
 # Contributing
 
-Keep sshto small, compatible with macOS Bash 3.2, and safe to use with existing SSH configuration.
+Keep sshto small, portable across macOS, Linux, and Windows, and safe to use with existing SSH configuration.
 
 ## Local checks
 
 ```sh
-/bin/bash -n sshto
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 python3 tests/verify.py
 ```
 
-Python 3 is a development dependency only. The test suite also uses a Homebrew Bash installation when available. Tests must use fictional hostnames, documentation IP ranges, isolated home directories, and an SSH stub; never connect to a real host.
+Use the stable Rust toolchain. Python 3.11 or newer is needed only for the Unix PTY suite and release builder; run `tests/verify.py` on macOS or Linux. Tests must use fictional hostnames, documentation IP ranges, isolated home directories, and an SSH stub; never connect to a real host.
 
-For interface changes, verify keyboard and mouse behavior, narrow terminals, resize handling, and terminal restoration. Preserve direct SSH argument forwarding. Keep user configuration as data; do not introduce `source` or `eval` for group rules.
+For interface changes, verify keyboard and mouse behavior, narrow terminals, resize handling, and terminal restoration. Preserve direct SSH argument forwarding and process only key-press events on Windows. Restore the terminal on every exit path, including errors and panics. Keep user configuration as data; do not introduce `source` or `eval` for group rules.
 
 ## Privacy
 
