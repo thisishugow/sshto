@@ -35,6 +35,7 @@ python3 tools/package.py dist/preview # Output directory must not exist
 ## Tests and releases
 
 - Tests use isolated homes and SSH stubs; never contact real hosts.
+- `tests/windows_menu.rs` (Windows only) injects conhost input records via `examples/win_console_driver.rs` and VT input via ConPTY; shared scenarios live in `tests/common/`.
 - Use fictional hostnames and documentation IPs only; never commit personal configuration, credentials, or real inventories.
 - Interface changes must cover keyboard, mouse, narrow terminals, resize, and restoration.
 - `Cargo.toml` is the only version source; use `env!("CARGO_PKG_VERSION")` in Rust and read the manifest in Python. Cargo updates the lockfile.

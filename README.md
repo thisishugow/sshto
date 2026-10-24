@@ -173,7 +173,7 @@ cargo test
 python3 tests/verify.py
 ```
 
-Rust tests cover parsing, menu state, CLI behavior, and SSH argument forwarding. On macOS and Linux, `tests/verify.py` builds the binary and checks real pseudo-terminal interactions and release contents. Tests use isolated home directories and SSH stubs without connecting to remote hosts. CI runs Rust checks on macOS, Linux, and Windows.
+Rust tests cover parsing, menu state, CLI behavior, and SSH argument forwarding. On macOS and Linux, `tests/verify.py` builds the binary and checks real pseudo-terminal interactions and release contents. On Windows, `tests/windows_menu.rs` drives the menu in the classic console and through ConPTY, launched from cmd and PowerShell. Tests use isolated home directories and SSH stubs without connecting to remote hosts. CI runs Rust checks on macOS, Linux, and Windows.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), and [PACKAGING.md](PACKAGING.md).
 
