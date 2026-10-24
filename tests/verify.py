@@ -291,14 +291,16 @@ else:
         self.assertEqual(s.wait(), 0, s.data.decode())
         self.assertEqual(self.connections(), [['cloud-ts']])
 
-    def test_external_sigint_restores_terminal(self):
-        s = self.start()
-        self.assertFalse(termios.tcgetattr(s.fd)[3] & termios.ECHO)
-        os.kill(s.pid, signal.SIGINT)
-        self.assertEqual(s.wait(), 130, s.data.decode())
-        for event in (b'\x1b[?1000l', b'\x1b[?1006l', b'\x1b[?25h', b'\x1b[?1049l'):
-            self.assertIn(event, s.data)
-        self.assertTrue(termios.tcgetattr(s.fd)[3] & termios.ECHO)
+    def test_external_signals_restore_terminal(self):
+        for sig in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM):
+            with self.subTest(signal=sig.name):
+                s = self.start()
+                self.assertFalse(termios.tcgetattr(s.fd)[3] & termios.ECHO)
+                os.kill(s.pid, sig)
+                self.assertEqual(s.wait(), 128 + sig, s.data.decode())
+                for event in (b'\x1b[?1000l', b'\x1b[?1006l', b'\x1b[?25h', b'\x1b[?1049l'):
+                    self.assertIn(event, s.data)
+                self.assertTrue(termios.tcgetattr(s.fd)[3] & termios.ECHO)
 
     def test_mouse_capture_does_not_request_motion(self):
         s = self.start()

@@ -204,7 +204,11 @@ impl Termination {
         #[cfg(unix)]
         {
             let mut termination = termination;
-            for signal in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
+            for signal in [
+                signal_hook::consts::SIGTERM,
+                signal_hook::consts::SIGINT,
+                signal_hook::consts::SIGHUP,
+            ] {
                 termination
                     .registrations
                     .push(signal_hook::flag::register_usize(
