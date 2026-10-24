@@ -237,6 +237,7 @@ impl Menu {
     }
 
     pub fn mark_resized(&mut self) {
+        self.mouse_press_y = None;
         self.resized = true;
     }
 
@@ -778,5 +779,20 @@ mod tests {
         assert_eq!(click(&mut menu, 5, 4, 4), Action::None);
         menu.select_tab(0);
         assert_eq!(click(&mut menu, 5, 4, 5), Action::None);
+    }
+
+    #[test]
+    fn resize_discards_press_even_when_redrawn_before_release() {
+        let mut menu = fixture();
+        menu.select_tab(2);
+        menu.layout(30, 160);
+        mouse(&mut menu, 0, 5, 4, MousePhase::Press, 1);
+        menu.mark_resized();
+        menu.layout(30, 100);
+        assert_eq!(
+            mouse(&mut menu, 0, 5, 4, MousePhase::Release, 2),
+            Action::None
+        );
+        assert_eq!(click(&mut menu, 5, 4, 3), Action::None);
     }
 }

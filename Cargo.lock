@@ -269,7 +269,9 @@ version = "0.1.0"
 dependencies = [
  "crossterm",
  "glob",
+ "signal-hook",
  "unicode-width",
+ "windows-sys",
 ]
 
 [[package]]

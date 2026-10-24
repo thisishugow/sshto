@@ -1,0 +1,417 @@
+use crate::menu::{self, Action, DisplayRow, Header, Key, Menu, MousePhase};
+use crossterm::{
+    cursor::{Hide, Show},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers, MouseButton, MouseEventKind,
+    },
+    execute,
+    terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use std::{
+    io::{self, Write},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Once,
+    },
+    time::{Duration, Instant},
+};
+
+// crossterm 的 Unix reader 在未收齊 CSI 時會再讀一次 stdin；非阻塞模式讓
+// poll 的 timeout 仍能生效，SIGTERM 與 resize 才不會被半個輸入序列卡住。
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod input_flags {
+    use std::{
+        io,
+        os::raw::c_int,
+        sync::atomic::{AtomicI32, Ordering},
+    };
+
+    const F_GETFL: c_int = 3;
+    const F_SETFL: c_int = 4;
+    #[cfg(target_os = "macos")]
+    const O_NONBLOCK: c_int = 0x0004;
+    #[cfg(target_os = "linux")]
+    const O_NONBLOCK: c_int = 0x0800;
+    static ORIGINAL: AtomicI32 = AtomicI32::new(-1);
+
+    extern "C" {
+        fn fcntl(fd: c_int, command: c_int, ...) -> c_int;
+    }
+
+    pub fn enable_nonblocking() -> io::Result<()> {
+        // stdin 已由啟動檢查確認為終端；fcntl 不會取得 descriptor 所有權。
+        let original = unsafe { fcntl(0, F_GETFL) };
+        if original == -1 || unsafe { fcntl(0, F_SETFL, original | O_NONBLOCK) } == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        ORIGINAL.store(original, Ordering::SeqCst);
+        Ok(())
+    }
+
+    pub fn restore() -> io::Result<()> {
+        let original = ORIGINAL.swap(-1, Ordering::SeqCst);
+        if original != -1 && unsafe { fcntl(0, F_SETFL, original) } == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+}
+
+static TERMINAL_ACTIVE: AtomicBool = AtomicBool::new(false);
+static PANIC_HOOK: Once = Once::new();
+
+fn restore_terminal() -> io::Result<()> {
+    if !TERMINAL_ACTIVE.swap(false, Ordering::SeqCst) {
+        return Ok(());
+    }
+    // PTY 的 stdin/stdout 可能共用 open file description，先恢復 flags，
+    // 避免清理畫面時 stdout 因非阻塞模式回報 WouldBlock。
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let flags = input_flags::restore();
+    let mut output = io::stdout();
+    let display = (|| {
+        execute!(output, DisableMouseCapture)?;
+        output.write_all(b"\x1b[0m")?;
+        execute!(output, Show, LeaveAlternateScreen)
+    })();
+    // 即使畫面輸出失敗，仍必須恢復原本的終端模式。
+    let mode = terminal::disable_raw_mode();
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let mode = flags.and(mode);
+    display.and(mode)
+}
+
+struct TerminalGuard;
+
+impl TerminalGuard {
+    fn enter() -> io::Result<Self> {
+        PANIC_HOOK.call_once(|| {
+            let previous = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                let _ = restore_terminal();
+                previous(info);
+            }));
+        });
+        terminal::enable_raw_mode()?;
+        TERMINAL_ACTIVE.store(true, Ordering::SeqCst);
+        let guard = Self;
+        // Hide 最後送出，讓測試的 readiness 標記代表終端已完成初始化。
+        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture, Hide)?;
+        Ok(guard)
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = restore_terminal();
+    }
+}
+
+struct Termination {
+    requested: Arc<AtomicBool>,
+    #[cfg(unix)]
+    registration: signal_hook::SigId,
+}
+
+impl Termination {
+    fn new() -> io::Result<Self> {
+        let requested = Arc::new(AtomicBool::new(false));
+        #[cfg(unix)]
+        let registration =
+            signal_hook::flag::register(signal_hook::consts::SIGTERM, requested.clone())?;
+        Ok(Self {
+            requested,
+            #[cfg(unix)]
+            registration,
+        })
+    }
+
+    fn requested(&self) -> bool {
+        self.requested.load(Ordering::Relaxed)
+    }
+}
+
+impl Drop for Termination {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        signal_hook::low_level::unregister(self.registration);
+    }
+}
+
+fn key(event: KeyEvent) -> Key {
+    if event.modifiers.contains(KeyModifiers::ALT) {
+        return Key::Quit;
+    }
+    if event.modifiers.contains(KeyModifiers::CONTROL) {
+        return match event.code {
+            KeyCode::Char('c') => Key::Interrupt,
+            KeyCode::Char('d') => Key::Quit,
+            KeyCode::Char('j' | 'm') => Key::Enter,
+            _ => Key::Other,
+        };
+    }
+    match event.code {
+        KeyCode::Up if event.modifiers.is_empty() => Key::Up,
+        KeyCode::Down if event.modifiers.is_empty() => Key::Down,
+        KeyCode::Left if event.modifiers.is_empty() => Key::Left,
+        KeyCode::Right if event.modifiers.is_empty() => Key::Right,
+        KeyCode::Tab => Key::Tab,
+        KeyCode::BackTab => Key::ShiftTab,
+        KeyCode::Enter => Key::Enter,
+        KeyCode::Esc | KeyCode::Char('q' | 'Q') => Key::Quit,
+        KeyCode::Char(digit @ '0'..='9') => Key::Digit(digit as u8 - b'0'),
+        _ => Key::Other,
+    }
+}
+
+fn mouse(event: event::MouseEvent) -> menu::MouseEvent {
+    let button_code = |button| match button {
+        MouseButton::Left => 0,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+    };
+    let (mut button, phase) = match event.kind {
+        MouseEventKind::Down(button) => (button_code(button), MousePhase::Press),
+        MouseEventKind::Up(button) => (button_code(button), MousePhase::Release),
+        MouseEventKind::Drag(button) => (32 + button_code(button), MousePhase::Press),
+        MouseEventKind::Moved => (35, MousePhase::Press),
+        MouseEventKind::ScrollUp => (64, MousePhase::Press),
+        MouseEventKind::ScrollDown => (65, MousePhase::Press),
+        MouseEventKind::ScrollLeft => (66, MousePhase::Press),
+        MouseEventKind::ScrollRight => (67, MousePhase::Press),
+    };
+    for (modifier, bit) in [
+        (KeyModifiers::SHIFT, 4),
+        (KeyModifiers::ALT, 8),
+        (KeyModifiers::CONTROL, 16),
+    ] {
+        if event.modifiers.contains(modifier) {
+            button |= bit;
+        }
+    }
+    menu::MouseEvent {
+        button,
+        x: usize::from(event.column) + 1,
+        y: usize::from(event.row) + 1,
+        phase,
+    }
+}
+
+fn render(menu: &mut Menu, rows: u16, cols: u16) -> Vec<u8> {
+    let layout = menu.layout(usize::from(rows), usize::from(cols));
+    let mut frame = String::from("\x1b[H\x1b[J");
+    match &layout.header {
+        Header::Hidden => {}
+        Header::Tabs => {
+            for (index, tab) in menu.tabs().iter().enumerate() {
+                frame.push_str(if index == menu.tab() {
+                    "\x1b[1;36m"
+                } else {
+                    "\x1b[2m"
+                });
+                frame.push_str(&tab.text);
+                frame.push_str("\x1b[0m");
+            }
+        }
+        Header::Compact(text) => {
+            frame.push_str("\x1b[1;36m");
+            frame.push_str(text);
+            frame.push_str("\x1b[0m");
+        }
+    }
+    if layout.header_rows > 0 {
+        frame.push_str("\r\n");
+    }
+    if let Some(controls) = &layout.controls {
+        frame.push_str(controls);
+        frame.push_str("\r\n");
+    }
+    if menu.visible().is_empty() {
+        frame.push_str(&menu::truncate_cells(
+            if layout.cols >= 24 {
+                "  No hosts in this group"
+            } else {
+                "(empty)"
+            },
+            layout.width,
+        ));
+    } else {
+        let end = (layout.offset + layout.slots).min(menu.display_rows().len());
+        for row in layout.offset..end {
+            let text = match menu.display_rows()[row] {
+                DisplayRow::Heading(group) => {
+                    frame.push_str("\x1b[1;36m");
+                    let tab = &menu.tabs()[group + 1];
+                    format!("{} ({})", tab.label, tab.count)
+                }
+                DisplayRow::Host(index) => {
+                    let marker = if row == layout.selected_row {
+                        frame.push_str("\x1b[1;97;44m");
+                        '>'
+                    } else {
+                        ' '
+                    };
+                    let indent = " ".repeat(layout.indent);
+                    let host = &menu.hosts()[index];
+                    if layout.cols >= 78 {
+                        let alias: String = host
+                            .alias
+                            .chars()
+                            .take(layout.alias_width as usize)
+                            .collect();
+                        let info: String = host
+                            .info
+                            .display()
+                            .chars()
+                            .take(layout.info_width as usize)
+                            .collect();
+                        format!(
+                            "{indent} {marker} {alias:width$}  {info}",
+                            width = layout.alias_width as usize
+                        )
+                    } else if layout.width >= 3 {
+                        format!("{indent}{marker} {}", host.alias)
+                    } else {
+                        host.alias.clone()
+                    }
+                }
+            };
+            frame.push_str(&menu::truncate_cells(&text, layout.width));
+            frame.push_str("\x1b[0m");
+            if row + 1 < end {
+                frame.push_str("\r\n");
+            }
+        }
+    }
+    if let Some(footer) = &layout.footer {
+        frame.push_str(&format!("\x1b[{};1H\x1b[2m{footer}\x1b[0m", layout.rows));
+    }
+    frame.into_bytes()
+}
+
+fn draw(menu: &mut Menu, rows: u16, cols: u16) -> io::Result<()> {
+    let frame = render(menu, rows, cols);
+    let mut output = io::stdout();
+    output.write_all(&frame)?;
+    output.flush()
+}
+
+fn read_event(timeout: Duration) -> io::Result<Option<Event>> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    input_flags::enable_nonblocking()?;
+    let result = (|| {
+        if event::poll(timeout)? {
+            event::read().map(Some)
+        } else {
+            Ok(None)
+        }
+    })();
+    // 只在讀取事件期間使用非阻塞模式；繪圖與 SSH 都繼承原 flags。
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let restored = input_flags::restore();
+        result.and_then(|event| restored.map(|()| event))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    result
+}
+
+pub fn run(menu: &mut Menu) -> io::Result<Action> {
+    let termination = Termination::new()?;
+    let _terminal = TerminalGuard::enter()?;
+    let started = Instant::now();
+    let (mut cols, mut rows) = terminal::size()?;
+    draw(menu, rows, cols)?;
+    let action = loop {
+        if termination.requested() {
+            break Action::Exit(143);
+        }
+        let Some(event) = read_event(Duration::from_millis(50))? else {
+            continue;
+        };
+        let action = match event {
+            Event::Key(event) if event.kind != KeyEventKind::Release => menu.handle_key(key(event)),
+            Event::Mouse(event) => {
+                menu.handle_mouse(mouse(event), started.elapsed().as_millis() as u64)
+            }
+            Event::Resize(new_cols, new_rows) => {
+                menu.mark_resized();
+                (cols, rows) = (new_cols, new_rows);
+                Action::None
+            }
+            _ => continue,
+        };
+        if action != Action::None {
+            break action;
+        }
+        draw(menu, rows, cols)?;
+    };
+    if matches!(action, Action::Connect(_)) {
+        execute!(io::stdout(), DisableMouseCapture)?;
+        // 同時清掉 crossterm 已解析的事件與尚留在 tty 的輸入，避免傳給 SSH。
+        while read_event(Duration::from_millis(20))?.is_some() {
+            if termination.requested() {
+                break;
+            }
+        }
+    }
+    restore_terminal()?;
+    Ok(if termination.requested() {
+        Action::Exit(143)
+    } else {
+        action
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keys_preserve_exit_codes_and_ignore_modified_arrows() {
+        for (code, modifiers, expected) in [
+            (KeyCode::Char('c'), KeyModifiers::CONTROL, Key::Interrupt),
+            (KeyCode::Char('d'), KeyModifiers::CONTROL, Key::Quit),
+            (KeyCode::Char('j'), KeyModifiers::CONTROL, Key::Enter),
+            (KeyCode::Char('x'), KeyModifiers::ALT, Key::Quit),
+            (KeyCode::Down, KeyModifiers::SHIFT, Key::Other),
+            (KeyCode::Down, KeyModifiers::NONE, Key::Down),
+            (KeyCode::BackTab, KeyModifiers::SHIFT, Key::ShiftTab),
+        ] {
+            assert_eq!(key(KeyEvent::new(code, modifiers)), expected);
+        }
+    }
+
+    #[test]
+    fn mouse_modifiers_do_not_activate_plain_clicks_or_wheels() {
+        let event = event::MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 4,
+            row: 3,
+            modifiers: KeyModifiers::CONTROL,
+        };
+        assert_eq!(
+            mouse(event),
+            menu::MouseEvent {
+                button: 81,
+                x: 5,
+                y: 4,
+                phase: MousePhase::Press,
+            }
+        );
+    }
+
+    #[test]
+    fn frames_keep_required_ansi_boundaries_and_host_rows() {
+        let (config, hosts) = crate::hosts::tests::fixture();
+        let mut menu = Menu::new(config.labels, hosts);
+        let frame = String::from_utf8(render(&mut menu, 7, 40)).unwrap();
+        assert!(frame.starts_with("\x1b[H\x1b[J"));
+        assert!(frame.contains("\r\n\x1b[1;36mTailscale (1)\x1b[0m\r\n"));
+        assert!(frame.contains("\x1b[1;97;44m  > cloud-ts\x1b[0m"));
+        assert!(frame.contains("\x1b[7;1H\x1b[2msshto  1/6"));
+        let single = String::from_utf8(render(&mut menu, 1, 2)).unwrap();
+        assert_eq!(single, "\x1b[H\x1b[J\x1b[1;97;44mc\x1b[0m");
+    }
+}
